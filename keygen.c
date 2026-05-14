@@ -41,6 +41,14 @@ static const char *bg_images[] = {
 #define NUM_BG_IMAGES (sizeof(bg_images) / sizeof(bg_images[0]))
 static int g_bg_index = 0;
 
+/* Background music */
+static const char *bg_music[] = {
+    "sounds/retro_platforming_david_fesliyan.mp3",
+    "sounds/funny_bit_david_renka.mp3",
+};
+#define NUM_MUSIC (sizeof(bg_music) / sizeof(bg_music[0]))
+static int g_music_index = 0;
+
 /* Audio playback thread */
 static void *audio_thread(void *arg) {
     audio_state_t *state = (audio_state_t *)arg;
@@ -164,6 +172,22 @@ static void stop_audio(void) {
     g_audio.running = 0;
     pthread_join(g_audio.thread, NULL);
     free(g_audio.mp3_file);
+}
+
+/* Change background music */
+static void change_bg_music(void) {
+    g_music_index = (g_music_index + 1) % NUM_MUSIC;
+    printf("Changing music to: %s\n", bg_music[g_music_index]);
+
+    /* Stop current audio */
+    g_audio.running = 0;
+    pthread_join(g_audio.thread, NULL);
+    free(g_audio.mp3_file);
+
+    /* Restart with new track */
+    g_audio.mp3_file = strdup(bg_music[g_music_index]);
+    g_audio.running = 1;
+    pthread_create(&g_audio.thread, NULL, audio_thread, &g_audio);
 }
 
 /* Load JPEG image and scale to fit window while preserving aspect ratio */
@@ -337,8 +361,6 @@ int main(void) {
     XColor red_color;
     char key_buffer[KEY_LENGTH + 1];
     char formatted_key[KEY_LENGTH + 4 + 1];
-    /* MP3 file path */
-    const char *mp3_file = "sounds/retro_platforming_david_fesliyan.mp3";
 
     /* Button region */
     int btn_x = 245, btn_y = 420, btn_w = 150, btn_h = 40;
@@ -347,7 +369,7 @@ int main(void) {
     srand((unsigned int)time(NULL));
 
     /* Start MP3 playback thread */
-    if (init_audio(mp3_file) != 0) {
+    if (init_audio(bg_music[g_music_index]) != 0) {
         fprintf(stderr, "Failed to initialize audio\n");
     }
 
@@ -500,7 +522,6 @@ int main(void) {
                 }
                 if (key == XK_m || key == XK_M) {
                     toggle_mute();
-                    /* Trigger redraw by generating an Expose event */
                     XEvent expose;
                     expose.type = Expose;
                     expose.xexpose.window = window;
@@ -508,11 +529,13 @@ int main(void) {
                 }
                 if (key == XK_s || key == XK_S) {
                     change_bg_image(display, screen);
-                    /* Trigger redraw by generating an Expose event */
                     XEvent expose;
                     expose.type = Expose;
                     expose.xexpose.window = window;
                     XSendEvent(display, window, False, ExposureMask, &expose);
+                }
+                if (key == XK_n || key == XK_N) {
+                    change_bg_music();
                 }
                 break;
             }

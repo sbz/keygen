@@ -35,6 +35,7 @@ make
 - Press `Q` or `Escape` to quit
 - Press `S` to change the background
 - Press `M` to mute the sound
+- Press `N` to change the mp3 music played
 
 ## How it works
 

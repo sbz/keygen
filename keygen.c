@@ -36,6 +36,7 @@ static const char *bg_images[] = {
     "img/samurai.jpg",
     "img/samurai-2.jpg",
     "img/samurai-3.jpg",
+    "img/samurai-4.jpg",
 };
 #define NUM_BG_IMAGES (sizeof(bg_images) / sizeof(bg_images[0]))
 static int g_bg_index = 0;
@@ -236,7 +237,7 @@ static XImage *load_jpeg_image(Display *display, int screen, const char *filenam
     /* Allocate scaled data initialized to black */
     scaled_data = calloc(target_width * target_height, 4);
 
-    /* Scale image using bilinear interpolation */
+    /* Scale image to fit window */
     for (int dy = 0; dy < new_height; dy++) {
         for (int dx = 0; dx < new_width; dx++) {
             int src_x = (int)(dx / scale);
@@ -244,11 +245,11 @@ static XImage *load_jpeg_image(Display *display, int screen, const char *filenam
             if (src_x >= src_width) src_x = src_width - 1;
             if (src_y >= src_height) src_y = src_height - 1;
 
-            int src_idx = (src_y * src_width + src_x) * 3;
             int dst_x = dx + offset_x;
             int dst_y = dy + offset_y;
 
             if (dst_x >= 0 && dst_x < target_width && dst_y >= 0 && dst_y < target_height) {
+                int src_idx = (src_y * src_width + src_x) * 3;
                 int dst_idx = (dst_y * target_width + dst_x) * 4;
                 scaled_data[dst_idx] = image_data[src_idx];
                 scaled_data[dst_idx + 1] = image_data[src_idx + 1];

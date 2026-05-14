@@ -31,6 +31,15 @@ static audio_state_t g_audio;
 /* Global image */
 static XImage *g_bg_image = NULL;
 
+/* Background images */
+static const char *bg_images[] = {
+    "img/samurai.jpg",
+    "img/samurai-2.jpg",
+    "img/samurai-3.jpg",
+};
+#define NUM_BG_IMAGES (sizeof(bg_images) / sizeof(bg_images[0]))
+static int g_bg_index = 0;
+
 /* Audio playback thread */
 static void *audio_thread(void *arg) {
     audio_state_t *state = (audio_state_t *)arg;
@@ -156,17 +165,21 @@ static void stop_audio(void) {
     free(g_audio.mp3_file);
 }
 
-/* Load JPEG image */
+/* Load JPEG image and scale to fit window while preserving aspect ratio */
 static XImage *load_jpeg_image(Display *display, int screen, const char *filename,
-                                int width, int height) {
-    (void)width; (void)height; /* Reserved for future scaling */
+                                int target_width, int target_height) {
     struct jpeg_decompress_struct cinfo;
     struct jpeg_error_mgr jerr;
     FILE *infile;
     JSAMPARRAY buffer;
     int row_stride;
     unsigned char *image_data;
+    unsigned char *scaled_data;
     XImage *ximage;
+    int src_width, src_height;
+    float scale;
+    int new_width, new_height;
+    int offset_x, offset_y;
 
     cinfo.err = jpeg_std_error(&jerr);
     jpeg_create_decompress(&cinfo);
@@ -179,19 +192,17 @@ static XImage *load_jpeg_image(Display *display, int screen, const char *filenam
 
     jpeg_stdio_src(&cinfo, infile);
     jpeg_read_header(&cinfo, TRUE);
-
-    /* Set scaling to fit target dimensions */
-    cinfo.scale_num = 1;
-    cinfo.scale_denom = 1;
-
     jpeg_start_decompress(&cinfo);
+
+    src_width = cinfo.output_width;
+    src_height = cinfo.output_height;
 
     row_stride = cinfo.output_width * cinfo.output_components;
     buffer = (*cinfo.mem->alloc_sarray)
         ((j_common_ptr)&cinfo, JPOOL_IMAGE, row_stride, 1);
 
-    /* Allocate image data (4 bytes per pixel for 32-bit) */
-    image_data = malloc(cinfo.output_width * cinfo.output_height * 4);
+    /* Allocate image data */
+    image_data = malloc(src_width * src_height * 3);
     if (!image_data) {
         fclose(infile);
         jpeg_destroy_decompress(&cinfo);
@@ -202,42 +213,59 @@ static XImage *load_jpeg_image(Display *display, int screen, const char *filenam
     int y = 0;
     while (cinfo.output_scanline < cinfo.output_height) {
         jpeg_read_scanlines(&cinfo, buffer, 1);
-
-        unsigned char *ptr = buffer[0];
-        for (unsigned int x = 0; x < cinfo.output_width; x++) {
-            int idx = (y * cinfo.output_width + x) * 3;
-            image_data[idx] = ptr[0];
-            image_data[idx + 1] = ptr[1];
-            image_data[idx + 2] = ptr[2];
-            ptr += cinfo.output_components;
-        }
+        memcpy(&image_data[y * src_width * 3], buffer[0], src_width * cinfo.output_components);
         y++;
     }
-
-    /* Create XImage with proper color handling */
-    Visual *visual = DefaultVisual(display, screen);
-    int depth = DefaultDepth(display, screen);
-
-    /* Convert from RGB planar to 32-bit packed pixels */
-    unsigned char *temp = malloc(cinfo.output_width * cinfo.output_height * 4);
-    for (JDIMENSION i = 0; i < cinfo.output_width * cinfo.output_height; i++) {
-        unsigned char r = image_data[i * 3];
-        unsigned char g = image_data[i * 3 + 1];
-        unsigned char b = image_data[i * 3 + 2];
-        /* Store as RGB in 32-bit pixels */
-        temp[i * 4] = r;
-        temp[i * 4 + 1] = g;
-        temp[i * 4 + 2] = b;
-        temp[i * 4 + 3] = 0;
-    }
-    free(image_data);
-
-    ximage = XCreateImage(display, visual, depth, ZPixmap, 0, (char *)temp,
-                          cinfo.output_width, cinfo.output_height, 32, cinfo.output_width * 4);
 
     jpeg_finish_decompress(&cinfo);
     fclose(infile);
     jpeg_destroy_decompress(&cinfo);
+
+    /* Calculate scale to fill window while preserving aspect ratio */
+    float scale_w = (float)target_width / src_width;
+    float scale_h = (float)target_height / src_height;
+    scale = (scale_w > scale_h) ? scale_w : scale_h;
+
+    new_width = (int)(src_width * scale);
+    new_height = (int)(src_height * scale);
+
+    /* Center the image */
+    offset_x = (target_width - new_width) / 2;
+    offset_y = (target_height - new_height) / 2;
+
+    /* Allocate scaled data initialized to black */
+    scaled_data = calloc(target_width * target_height, 4);
+
+    /* Scale image using bilinear interpolation */
+    for (int dy = 0; dy < new_height; dy++) {
+        for (int dx = 0; dx < new_width; dx++) {
+            int src_x = (int)(dx / scale);
+            int src_y = (int)(dy / scale);
+            if (src_x >= src_width) src_x = src_width - 1;
+            if (src_y >= src_height) src_y = src_height - 1;
+
+            int src_idx = (src_y * src_width + src_x) * 3;
+            int dst_x = dx + offset_x;
+            int dst_y = dy + offset_y;
+
+            if (dst_x >= 0 && dst_x < target_width && dst_y >= 0 && dst_y < target_height) {
+                int dst_idx = (dst_y * target_width + dst_x) * 4;
+                scaled_data[dst_idx] = image_data[src_idx];
+                scaled_data[dst_idx + 1] = image_data[src_idx + 1];
+                scaled_data[dst_idx + 2] = image_data[src_idx + 2];
+                scaled_data[dst_idx + 3] = 0;
+            }
+        }
+    }
+
+    free(image_data);
+
+    /* Create XImage */
+    Visual *visual = DefaultVisual(display, screen);
+    int depth = DefaultDepth(display, screen);
+
+    ximage = XCreateImage(display, visual, depth, ZPixmap, 0, (char *)scaled_data,
+                          target_width, target_height, 32, target_width * 4);
 
     return ximage;
 }
@@ -246,6 +274,21 @@ static XImage *load_jpeg_image(Display *display, int screen, const char *filenam
 static void toggle_mute(void) {
     g_audio.muted = !g_audio.muted;
     printf("Music: %s\n", g_audio.muted ? "OFF (muted)" : "ON (unmuted)");
+}
+
+/* Change background image */
+static void change_bg_image(Display *display, int screen) {
+    if (g_bg_image) {
+        g_bg_image->data = NULL;
+        XDestroyImage(g_bg_image);
+    }
+
+    g_bg_index = (g_bg_index + 1) % NUM_BG_IMAGES;
+    g_bg_image = load_jpeg_image(display, screen, bg_images[g_bg_index], WINDOW_WIDTH, WINDOW_HEIGHT);
+
+    if (g_bg_image) {
+        printf("Background image changed to: %s\n", bg_images[g_bg_index]);
+    }
 }
 
 /* Generate a random alphanumeric key */
@@ -289,6 +332,8 @@ int main(void) {
     XEvent event;
     GC gc;
     XFontStruct *font;
+    Colormap colormap;
+    XColor red_color;
     char key_buffer[KEY_LENGTH + 1];
     char formatted_key[KEY_LENGTH + 4 + 1];
     /* MP3 file path */
@@ -315,9 +360,13 @@ int main(void) {
 
     int screen = DefaultScreen(display);
     Window root = RootWindow(display, screen);
+    colormap = DefaultColormap(display, screen);
+
+    /* Allocate red color */
+    XAllocNamedColor(display, colormap, "red", &red_color, &red_color);
 
     /* Load background image */
-    g_bg_image = load_jpeg_image(display, screen, "img/samurai.jpg", WINDOW_WIDTH, WINDOW_HEIGHT);
+    g_bg_image = load_jpeg_image(display, screen, bg_images[g_bg_index], WINDOW_WIDTH, WINDOW_HEIGHT);
     if (!g_bg_image) {
         fprintf(stderr, "Warning: Could not load background image\n");
     }
@@ -390,8 +439,8 @@ int main(void) {
                 draw_retro_button(display, window, gc, btn_x, btn_y, btn_w, btn_h,
                                   BlackPixel(display, screen), WhitePixel(display, screen));
 
-                /* Draw copyright */
-                XSetForeground(display, gc, WhitePixel(display, screen));
+                /* Draw copyright in red */
+                XSetForeground(display, gc, red_color.pixel);
                 XDrawString(display, window, gc, 540, 460, "(c) by sbz", 10);
 
                 break;
@@ -436,7 +485,7 @@ int main(void) {
                     draw_retro_button(display, window, gc, btn_x, btn_y, btn_w, btn_h,
                                       BlackPixel(display, screen), WhitePixel(display, screen));
 
-                    XSetForeground(display, gc, WhitePixel(display, screen));
+                    XSetForeground(display, gc, red_color.pixel);
                     XDrawString(display, window, gc, 540, 460, "(c) by sbz", 10);
                 }
 
@@ -450,6 +499,14 @@ int main(void) {
                 }
                 if (key == XK_m || key == XK_M) {
                     toggle_mute();
+                    /* Trigger redraw by generating an Expose event */
+                    XEvent expose;
+                    expose.type = Expose;
+                    expose.xexpose.window = window;
+                    XSendEvent(display, window, False, ExposureMask, &expose);
+                }
+                if (key == XK_s || key == XK_S) {
+                    change_bg_image(display, screen);
                     /* Trigger redraw by generating an Expose event */
                     XEvent expose;
                     expose.type = Expose;

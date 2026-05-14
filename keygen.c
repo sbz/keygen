@@ -1,6 +1,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xos.h>
+#include <X11/Xft/Xft.h>
 #include <mpg123.h>
 #include <alsa/asoundlib.h>
 #include <jpeglib.h>
@@ -359,6 +360,9 @@ int main(void) {
     XFontStruct *font;
     Colormap colormap;
     XColor red_color;
+    XftDraw *xft_draw;
+    XftFont *xft_font;
+    XftColor xft_white;
     char key_buffer[KEY_LENGTH + 1];
     char formatted_key[KEY_LENGTH + 4 + 1];
 
@@ -413,6 +417,16 @@ int main(void) {
         XSetFont(display, gc, font->fid);
     }
 
+    xft_draw = XftDrawCreate(display, window, DefaultVisual(display, screen), DefaultColormap(display, screen));
+    xft_font = XftFontOpenName(display, screen, "KanjiStrokeOrders:style=Regular-12");
+    if (!xft_font) {
+        xft_font = XftFontOpenName(display, screen, "DejaVu Sans Mono-12");
+    }
+    if (!xft_font) {
+        xft_font = XftFontOpenName(display, screen, "Noto Sans CJK JP-12");
+    }
+    XftColorAllocName(display, DefaultVisual(display, screen), DefaultColormap(display, screen), "white", &xft_white);
+
     /* Map window */
     XMapWindow(display, window);
 
@@ -462,6 +476,11 @@ int main(void) {
                 draw_retro_button(display, window, gc, btn_x, btn_y, btn_w, btn_h,
                                   BlackPixel(display, screen), WhitePixel(display, screen));
 
+                if (xft_font && xft_draw) {
+                    XftDrawStringUtf8(xft_draw, &xft_white, xft_font, 10, 470,
+                                      (const FcChar8 *)"花は桜木人は武士", 7);
+                }
+
                 /* Draw copyright in red */
                 XSetForeground(display, gc, red_color.pixel);
                 XDrawString(display, window, gc, 540, 460, "(c) by sbz", 10);
@@ -510,6 +529,11 @@ int main(void) {
 
                     XSetForeground(display, gc, red_color.pixel);
                     XDrawString(display, window, gc, 540, 460, "(c) by sbz", 10);
+
+                    if (xft_font && xft_draw) {
+                        XftDrawStringUtf8(xft_draw, &xft_white, xft_font, 10, 460,
+                                          (const FcChar8 *)"花は桜木人は武士", 7);
+                    }
                 }
 
                 break;
@@ -549,10 +573,16 @@ cleanup:
     stop_audio();
 
     if (g_bg_image) {
-        g_bg_image->data = NULL; /* Data already freed with image */
+        g_bg_image->data = NULL;
         XDestroyImage(g_bg_image);
     }
 
+    if (xft_draw) {
+        XftDrawDestroy(xft_draw);
+    }
+    if (xft_font) {
+        XftFontClose(display, xft_font);
+    }
     if (font != NULL) {
         XFreeFont(display, font);
     }

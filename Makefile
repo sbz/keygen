@@ -1,6 +1,6 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -O2
-LDFLAGS = -lX11 -lmpg123 -lasound -lpthread -lm -ljpeg
+CFLAGS = -Wall -Wextra -O2 `pkg-config --cflags xft`
+LDFLAGS = -lX11 -lmpg123 -lasound -lpthread -lm -ljpeg `pkg-config --libs xft`
 
 TARGET = keygen
 SRC = keygen.c

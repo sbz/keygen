@@ -14,6 +14,9 @@ And yes, Keygen are totally useless now because we are free and use Free Softwar
 - Alsa library libasound
 - Mpeg library libmpg123
 - Jpeg library libjpeg
+- Xft library libxft for font rendering
+
+To render Japanese Kanji you need to install KanjiStrokeOrders font from https://www.nihilist.org.uk
 
 ## Building
 

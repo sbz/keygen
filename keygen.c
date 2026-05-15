@@ -490,13 +490,13 @@ int main(void) {
                                   WhitePixel(display, screen), BlackPixel(display, screen));
 
                 if (xft_font && xft_draw) {
-                    XftDrawStringUtf8(xft_draw, &xft_white, xft_font, 10, 470,
-                                      (const FcChar8 *)"花は桜木人は武士", 7);
+                    XftDrawStringUtf8(xft_draw, &xft_white, xft_font, 10, 450,
+                                      (const FcChar8 *)"花は桜木人は武士", 21);
                 }
 
                 /* Draw copyright in red */
                 XSetForeground(display, gc, red_color.pixel);
-                XDrawString(display, window, gc, 540, 460, "(c) by sbz", 10);
+                XDrawString(display, window, gc, 540, 450, "(c) by sbz", 10);
 
                 break;
             }
@@ -546,7 +546,7 @@ int main(void) {
                     XDrawString(display, window, gc, 540, 460, "(c) by sbz", 10);
 
                     if (xft_font && xft_draw) {
-                        XftDrawStringUtf8(xft_draw, &xft_white, xft_font, 10, 460,
+                        XftDrawStringUtf8(xft_draw, &xft_white, xft_font, 10, 470,
                                           (const FcChar8 *)"花は桜木人は武士", 7);
                     }
                 }

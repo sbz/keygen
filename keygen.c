@@ -751,8 +751,8 @@ int main(void) {
                 int x = event.xbutton.x;
                 int y = event.xbutton.y;
 
-                if (x >= btn_x && x <= btn_x + btn_w &&
-                    y >= btn_y && y <= btn_y + btn_h) {
+                if (x >= btn_x && x < btn_x + btn_w &&
+                    y >= btn_y && y < btn_y + btn_h) {
                     generate_key(key_buffer, KEY_LENGTH);
                     format_key(key_buffer, formatted_key, sizeof(formatted_key));
                     printf("Generated key: %s\n", formatted_key);

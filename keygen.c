@@ -778,17 +778,15 @@ int main(void) {
                 }
                 if (key == XK_m || key == XK_M) {
                     toggle_mute();
-                    XEvent expose;
-                    expose.type = Expose;
-                    expose.xexpose.window = window;
-                    XSendEvent(display, window, False, ExposureMask, &expose);
+                    redraw_window(display, screen, window, gc, font,
+                                  xft_draw, xft_font, &xft_white, &red_color,
+                                  btn_x, btn_y, btn_w, btn_h, formatted_key);
                 }
                 if (key == XK_s || key == XK_S) {
                     change_bg_image(display, screen);
-                    XEvent expose;
-                    expose.type = Expose;
-                    expose.xexpose.window = window;
-                    XSendEvent(display, window, False, ExposureMask, &expose);
+                    redraw_window(display, screen, window, gc, font,
+                                  xft_draw, xft_font, &xft_white, &red_color,
+                                  btn_x, btn_y, btn_w, btn_h, formatted_key);
                 }
                 if (key == XK_n || key == XK_N) {
                     change_bg_music();

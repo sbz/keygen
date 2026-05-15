@@ -44,6 +44,7 @@ typedef struct {
 } audio_state_t;
 
 static audio_state_t g_audio;
+static pthread_mutex_t g_audio_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* Global image */
 static XImage *g_bg_image = NULL;
@@ -275,6 +276,8 @@ static void stop_audio(void) {
 
 /* Change background music */
 static void change_bg_music(void) {
+    pthread_mutex_lock(&g_audio_lock);
+
     g_music_index = (g_music_index + 1) % NUM_MUSIC;
     printf("Changing music to: %s\n", bg_music[g_music_index]);
 
@@ -282,11 +285,25 @@ static void change_bg_music(void) {
     g_audio.running = 0;
     pthread_join(g_audio.thread, NULL);
     free(g_audio.mp3_file);
+    g_audio.mp3_file = NULL;
 
     /* Restart with new track */
-    g_audio.mp3_file = strdup(bg_music[g_music_index]);
+    char *next = strdup(bg_music[g_music_index]);
+    if (!next) {
+        fprintf(stderr, "Out of memory selecting next track\n");
+        pthread_mutex_unlock(&g_audio_lock);
+        return;
+    }
+    g_audio.mp3_file = next;
     g_audio.running = 1;
-    pthread_create(&g_audio.thread, NULL, audio_thread, &g_audio);
+    if (pthread_create(&g_audio.thread, NULL, audio_thread, &g_audio) != 0) {
+        fprintf(stderr, "Failed to start audio thread\n");
+        free(g_audio.mp3_file);
+        g_audio.mp3_file = NULL;
+        g_audio.running = 0;
+    }
+
+    pthread_mutex_unlock(&g_audio_lock);
 }
 
 /* Custom libjpeg error handler that longjmps instead of calling exit() */

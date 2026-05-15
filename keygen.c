@@ -396,11 +396,21 @@ static XImage *load_jpeg_image(Display *display, int screen, const char *filenam
     }
 
     jpeg_stdio_src(&cinfo, infile);
-    jpeg_read_header(&cinfo, TRUE);
+    if (jpeg_read_header(&cinfo, TRUE) != JPEG_HEADER_OK) {
+        fprintf(stderr, "JPEG header invalid: %s\n", filename);
+        fclose(infile);
+        jpeg_destroy_decompress(&cinfo);
+        return NULL;
+    }
     /* Force RGB output so the rest of the pipeline (which assumes 3 bytes
        per pixel) handles grayscale and CMYK sources correctly. */
     cinfo.out_color_space = JCS_RGB;
-    jpeg_start_decompress(&cinfo);
+    if (!jpeg_start_decompress(&cinfo)) {
+        fprintf(stderr, "JPEG start_decompress failed: %s\n", filename);
+        fclose(infile);
+        jpeg_destroy_decompress(&cinfo);
+        return NULL;
+    }
 
     src_width = cinfo.output_width;
     src_height = cinfo.output_height;

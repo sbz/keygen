@@ -78,8 +78,6 @@ static void *audio_thread(void *arg) {
     int channels, encoding;
     int err;
 
-    /* Initialize mpg123 */
-    mpg123_init();
     state->mh = mpg123_new(NULL, &err);
     if (!state->mh) {
         fprintf(stderr, "Failed to create mpg123 handle: %s\n", mpg123_plain_strerror(err));
@@ -116,7 +114,6 @@ static void *audio_thread(void *arg) {
             fprintf(stderr, "Cannot open OSS device /dev/dsp\n");
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
-            mpg123_exit();
             return NULL;
         }
 
@@ -126,7 +123,6 @@ static void *audio_thread(void *arg) {
             close(state->oss_fd);
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
-            mpg123_exit();
             return NULL;
         }
 
@@ -136,7 +132,6 @@ static void *audio_thread(void *arg) {
             close(state->oss_fd);
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
-            mpg123_exit();
             return NULL;
         }
 
@@ -146,7 +141,6 @@ static void *audio_thread(void *arg) {
             close(state->oss_fd);
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
-            mpg123_exit();
             return NULL;
         }
 
@@ -244,7 +238,6 @@ static void *audio_thread(void *arg) {
     }
     mpg123_close(state->mh);
     mpg123_delete(state->mh);
-    mpg123_exit();
 
     return NULL;
 }
@@ -531,6 +524,9 @@ int main(void) {
     /* Initialize random seed */
     srand((unsigned int)time(NULL));
 
+    /* Initialize mpg123 once for the lifetime of the process */
+    mpg123_init();
+
     /* Start MP3 playback thread */
     if (init_audio(bg_music[g_music_index]) != 0) {
         fprintf(stderr, "Failed to initialize audio\n");
@@ -745,6 +741,7 @@ int main(void) {
 
 cleanup:
     stop_audio();
+    mpg123_exit();
 
     if (g_bg_image) {
         XDestroyImage(g_bg_image);

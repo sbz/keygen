@@ -42,6 +42,7 @@ typedef struct {
 #endif
     mpg123_handle *mh;
     pthread_t thread;
+    int thread_started;
     atomic_int running;
     atomic_int muted;
     char *mp3_file;
@@ -282,15 +283,28 @@ static int init_audio(const char *mp3_file) {
     g_audio.use_oss = 0;
 #endif
     g_audio.mh = NULL;
+    g_audio.thread_started = 0;
 
-    return pthread_create(&g_audio.thread, NULL, audio_thread, &g_audio);
+    int rc = pthread_create(&g_audio.thread, NULL, audio_thread, &g_audio);
+    if (rc != 0) {
+        free(g_audio.mp3_file);
+        g_audio.mp3_file = NULL;
+        g_audio.running = 0;
+        return rc;
+    }
+    g_audio.thread_started = 1;
+    return 0;
 }
 
 /* Stop audio playback */
 static void stop_audio(void) {
     g_audio.running = 0;
-    pthread_join(g_audio.thread, NULL);
+    if (g_audio.thread_started) {
+        pthread_join(g_audio.thread, NULL);
+        g_audio.thread_started = 0;
+    }
     free(g_audio.mp3_file);
+    g_audio.mp3_file = NULL;
 }
 
 /* Change background music */
@@ -302,7 +316,10 @@ static void change_bg_music(void) {
 
     /* Stop current audio */
     g_audio.running = 0;
-    pthread_join(g_audio.thread, NULL);
+    if (g_audio.thread_started) {
+        pthread_join(g_audio.thread, NULL);
+        g_audio.thread_started = 0;
+    }
     free(g_audio.mp3_file);
     g_audio.mp3_file = NULL;
 
@@ -320,6 +337,8 @@ static void change_bg_music(void) {
         free(g_audio.mp3_file);
         g_audio.mp3_file = NULL;
         g_audio.running = 0;
+    } else {
+        g_audio.thread_started = 1;
     }
 
     pthread_mutex_unlock(&g_audio_lock);

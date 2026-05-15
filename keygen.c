@@ -191,7 +191,11 @@ static void *audio_thread(void *arg) {
         err = mpg123_read(state->mh, decode_buffer, AUDIO_BUFFER, &done);
 
         if (err == MPG123_DONE) {
-            mpg123_seek(state->mh, 0, SEEK_SET);
+            if (mpg123_seek(state->mh, 0, SEEK_SET) < 0) {
+                fprintf(stderr, "mpg123 rewind failed: %s\n",
+                        mpg123_strerror(state->mh));
+                break;
+            }
             continue;
         }
 
@@ -213,6 +217,14 @@ static void *audio_thread(void *arg) {
         }
 
         if (err != MPG123_OK) {
+            continue;
+        }
+
+        if (done == 0) {
+            /* Avoid a hot spin if the decoder yields no data without
+               signalling completion or a new format. */
+            struct timespec ts = { 0, 10 * 1000 * 1000 }; /* 10 ms */
+            nanosleep(&ts, NULL);
             continue;
         }
 

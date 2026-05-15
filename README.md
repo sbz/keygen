@@ -1,7 +1,11 @@
 # Keygen - X11 Key Generator
 
 A simple graphical key generator application using the X11 library like the good
-old keygen from the 1990's era but for UNIX/Linux :)
+old keygen from the 1990's era but for UNIX.
+
+FreeBSD and Linux are supported.
+- Background sound is using ALSA on Linux
+- Background sound is using Open Sound System (OSS) on FreeBSD
 
 "Because I'm a huge fan of Samurai" -- **Hana wa sakuragi, hito wa bushi**
 

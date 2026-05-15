@@ -562,6 +562,10 @@ int main(void) {
     XSelectInput(display, window, ExposureMask | ButtonPressMask | KeyPressMask);
     XStoreName(display, window, "Keygen - Samurai Edition");
 
+    /* Register for WM close button so we can exit cleanly */
+    Atom wm_delete = XInternAtom(display, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(display, window, &wm_delete, 1);
+
     /* Create graphics context */
     gc = XCreateGC(display, window, 0, NULL);
 
@@ -735,7 +739,10 @@ int main(void) {
             }
 
             case ClientMessage:
-                goto cleanup;
+                if ((Atom)event.xclient.data.l[0] == wm_delete) {
+                    goto cleanup;
+                }
+                break;
         }
     }
 

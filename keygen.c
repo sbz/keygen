@@ -397,6 +397,9 @@ static XImage *load_jpeg_image(Display *display, int screen, const char *filenam
 
     jpeg_stdio_src(&cinfo, infile);
     jpeg_read_header(&cinfo, TRUE);
+    /* Force RGB output so the rest of the pipeline (which assumes 3 bytes
+       per pixel) handles grayscale and CMYK sources correctly. */
+    cinfo.out_color_space = JCS_RGB;
     jpeg_start_decompress(&cinfo);
 
     src_width = cinfo.output_width;

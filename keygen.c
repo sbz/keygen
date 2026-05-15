@@ -11,6 +11,8 @@
 #include <time.h>
 #include <pthread.h>
 #include <math.h>
+#include <setjmp.h>
+#include <stdint.h>
 #ifdef __FreeBSD__
 #include <fcntl.h>
 #include <unistd.h>
@@ -281,11 +283,23 @@ static void change_bg_music(void) {
     pthread_create(&g_audio.thread, NULL, audio_thread, &g_audio);
 }
 
+/* Custom libjpeg error handler that longjmps instead of calling exit() */
+struct keygen_jpeg_err {
+    struct jpeg_error_mgr pub;
+    jmp_buf setjmp_buffer;
+};
+
+static void keygen_jpeg_error_exit(j_common_ptr cinfo) {
+    struct keygen_jpeg_err *err = (struct keygen_jpeg_err *)cinfo->err;
+    (*cinfo->err->output_message)(cinfo);
+    longjmp(err->setjmp_buffer, 1);
+}
+
 /* Load JPEG image and scale to fit window while preserving aspect ratio */
 static XImage *load_jpeg_image(Display *display, int screen, const char *filename,
                                 int target_width, int target_height) {
     struct jpeg_decompress_struct cinfo;
-    struct jpeg_error_mgr jerr;
+    struct keygen_jpeg_err jerr;
     FILE *infile;
     JSAMPARRAY buffer;
     int row_stride;
@@ -297,7 +311,21 @@ static XImage *load_jpeg_image(Display *display, int screen, const char *filenam
     int new_width, new_height;
     int offset_x, offset_y;
 
-    cinfo.err = jpeg_std_error(&jerr);
+    image_data = NULL;
+    scaled_data = NULL;
+    infile = NULL;
+
+    cinfo.err = jpeg_std_error(&jerr.pub);
+    jerr.pub.error_exit = keygen_jpeg_error_exit;
+    if (setjmp(jerr.setjmp_buffer)) {
+        /* libjpeg signaled a fatal error */
+        jpeg_destroy_decompress(&cinfo);
+        if (infile) fclose(infile);
+        free(image_data);
+        free(scaled_data);
+        fprintf(stderr, "JPEG decode failed: %s\n", filename);
+        return NULL;
+    }
     jpeg_create_decompress(&cinfo);
 
     if ((infile = fopen(filename, "rb")) == NULL) {

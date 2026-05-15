@@ -401,7 +401,7 @@ int main(void) {
     XAllocNamedColor(display, colormap, "red", &red_color, &red_color);
 
     /* Load background image */
-    g_bg_image = load_jpeg_image(display, screen, bg_images[g_bg_index], WINDOW_WIDTH, WINDOW_HEIGHT);
+    g_bg_image = load_jpeg_image(display, screen, bg_images[rand() % NUM_BG_IMAGES], WINDOW_WIDTH, WINDOW_HEIGHT);
     if (!g_bg_image) {
         fprintf(stderr, "Warning: Could not load background image\n");
     }

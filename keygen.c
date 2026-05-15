@@ -11,6 +11,13 @@
 #include <time.h>
 #include <pthread.h>
 #include <math.h>
+#include <setjmp.h>
+#include <stdint.h>
+#include <stdatomic.h>
+#include <errno.h>
+#if defined(__linux__) || defined(__FreeBSD__)
+#include <sys/random.h>
+#endif
 #ifdef __FreeBSD__
 #include <fcntl.h>
 #include <unistd.h>
@@ -35,12 +42,14 @@ typedef struct {
 #endif
     mpg123_handle *mh;
     pthread_t thread;
-    int running;
-    int muted;
+    int thread_started;
+    atomic_int running;
+    atomic_int muted;
     char *mp3_file;
 } audio_state_t;
 
 static audio_state_t g_audio;
+static pthread_mutex_t g_audio_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* Global image */
 static XImage *g_bg_image = NULL;
@@ -74,11 +83,10 @@ static void *audio_thread(void *arg) {
     int channels, encoding;
     int err;
 
-    /* Initialize mpg123 */
-    mpg123_init();
     state->mh = mpg123_new(NULL, &err);
     if (!state->mh) {
         fprintf(stderr, "Failed to create mpg123 handle: %s\n", mpg123_plain_strerror(err));
+        state->running = 0;
         return NULL;
     }
 
@@ -86,6 +94,7 @@ static void *audio_thread(void *arg) {
     if (mpg123_open(state->mh, state->mp3_file) != MPG123_OK) {
         fprintf(stderr, "Failed to open MP3 file\n");
         mpg123_delete(state->mh);
+        state->running = 0;
         return NULL;
     }
 
@@ -94,6 +103,7 @@ static void *audio_thread(void *arg) {
         fprintf(stderr, "Failed to get audio format\n");
         mpg123_close(state->mh);
         mpg123_delete(state->mh);
+        state->running = 0;
         return NULL;
     }
 
@@ -112,7 +122,7 @@ static void *audio_thread(void *arg) {
             fprintf(stderr, "Cannot open OSS device /dev/dsp\n");
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
-            mpg123_exit();
+            state->running = 0;
             return NULL;
         }
 
@@ -122,7 +132,7 @@ static void *audio_thread(void *arg) {
             close(state->oss_fd);
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
-            mpg123_exit();
+            state->running = 0;
             return NULL;
         }
 
@@ -132,7 +142,7 @@ static void *audio_thread(void *arg) {
             close(state->oss_fd);
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
-            mpg123_exit();
+            state->running = 0;
             return NULL;
         }
 
@@ -142,7 +152,7 @@ static void *audio_thread(void *arg) {
             close(state->oss_fd);
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
-            mpg123_exit();
+            state->running = 0;
             return NULL;
         }
 
@@ -165,8 +175,11 @@ static void *audio_thread(void *arg) {
         if (err < 0) {
             fprintf(stderr, "Cannot set audio params: %s\n", snd_strerror(err));
             snd_pcm_close(state->alsa_pcm);
+            state->alsa_pcm = NULL;
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
+            state->mh = NULL;
+            state->running = 0;
             return NULL;
         }
     }
@@ -177,7 +190,11 @@ static void *audio_thread(void *arg) {
         err = mpg123_read(state->mh, decode_buffer, AUDIO_BUFFER, &done);
 
         if (err == MPG123_DONE) {
-            mpg123_seek(state->mh, 0, SEEK_SET);
+            if (mpg123_seek(state->mh, 0, SEEK_SET) < 0) {
+                fprintf(stderr, "mpg123 rewind failed: %s\n",
+                        mpg123_strerror(state->mh));
+                break;
+            }
             continue;
         }
 
@@ -201,9 +218,16 @@ static void *audio_thread(void *arg) {
             continue;
         }
 
-        int samples = done / sizeof(int16_t);
+        if (done == 0) {
+            struct timespec ts = { 0, 10 * 1000 * 1000 }; /* 10 ms */
+            nanosleep(&ts, NULL);
+            continue;
+        }
+
+        size_t aligned = done & ~(size_t)1;
+        int samples = (int)(aligned / sizeof(int16_t));
         if (state->muted) {
-            memset(audio_buffer, 0, done);
+            memset(audio_buffer, 0, aligned);
         } else {
             int16_t *decoded = (int16_t *)decode_buffer;
             for (int i = 0; i < samples; i++) {
@@ -213,7 +237,18 @@ static void *audio_thread(void *arg) {
 
 #ifdef __FreeBSD__
         if (state->use_oss) {
-            write(state->oss_fd, audio_buffer, done);
+            const unsigned char *p = (const unsigned char *)audio_buffer;
+            size_t remaining = aligned;
+            while (remaining > 0) {
+                ssize_t w = write(state->oss_fd, p, remaining);
+                if (w < 0) {
+                    if (errno == EINTR) continue;
+                    fprintf(stderr, "OSS write failed: %s\n", strerror(errno));
+                    break;
+                }
+                p += w;
+                remaining -= (size_t)w;
+            }
         } else
 #endif
         {
@@ -236,7 +271,6 @@ static void *audio_thread(void *arg) {
     }
     mpg123_close(state->mh);
     mpg123_delete(state->mh);
-    mpg123_exit();
 
     return NULL;
 }
@@ -244,6 +278,9 @@ static void *audio_thread(void *arg) {
 /* Initialize audio playback */
 static int init_audio(const char *mp3_file) {
     g_audio.mp3_file = strdup(mp3_file);
+    if (!g_audio.mp3_file) {
+        return -1;
+    }
     g_audio.running = 1;
     g_audio.muted = 0;
     g_audio.alsa_pcm = NULL;
@@ -252,38 +289,83 @@ static int init_audio(const char *mp3_file) {
     g_audio.use_oss = 0;
 #endif
     g_audio.mh = NULL;
+    g_audio.thread_started = 0;
 
-    return pthread_create(&g_audio.thread, NULL, audio_thread, &g_audio);
+    int rc = pthread_create(&g_audio.thread, NULL, audio_thread, &g_audio);
+    if (rc != 0) {
+        free(g_audio.mp3_file);
+        g_audio.mp3_file = NULL;
+        g_audio.running = 0;
+        return rc;
+    }
+    g_audio.thread_started = 1;
+    return 0;
 }
 
 /* Stop audio playback */
 static void stop_audio(void) {
     g_audio.running = 0;
-    pthread_join(g_audio.thread, NULL);
+    if (g_audio.thread_started) {
+        pthread_join(g_audio.thread, NULL);
+        g_audio.thread_started = 0;
+    }
     free(g_audio.mp3_file);
+    g_audio.mp3_file = NULL;
 }
 
 /* Change background music */
 static void change_bg_music(void) {
+    pthread_mutex_lock(&g_audio_lock);
+
     g_music_index = (g_music_index + 1) % NUM_MUSIC;
     printf("Changing music to: %s\n", bg_music[g_music_index]);
 
     /* Stop current audio */
     g_audio.running = 0;
-    pthread_join(g_audio.thread, NULL);
+    if (g_audio.thread_started) {
+        pthread_join(g_audio.thread, NULL);
+        g_audio.thread_started = 0;
+    }
     free(g_audio.mp3_file);
+    g_audio.mp3_file = NULL;
 
     /* Restart with new track */
-    g_audio.mp3_file = strdup(bg_music[g_music_index]);
+    char *next = strdup(bg_music[g_music_index]);
+    if (!next) {
+        fprintf(stderr, "Out of memory selecting next track\n");
+        pthread_mutex_unlock(&g_audio_lock);
+        return;
+    }
+    g_audio.mp3_file = next;
     g_audio.running = 1;
-    pthread_create(&g_audio.thread, NULL, audio_thread, &g_audio);
+    if (pthread_create(&g_audio.thread, NULL, audio_thread, &g_audio) != 0) {
+        fprintf(stderr, "Failed to start audio thread\n");
+        free(g_audio.mp3_file);
+        g_audio.mp3_file = NULL;
+        g_audio.running = 0;
+    } else {
+        g_audio.thread_started = 1;
+    }
+
+    pthread_mutex_unlock(&g_audio_lock);
+}
+
+struct keygen_jpeg_err {
+    struct jpeg_error_mgr pub;
+    jmp_buf setjmp_buffer;
+};
+
+static void keygen_jpeg_error_exit(j_common_ptr cinfo) {
+    struct keygen_jpeg_err *err = (struct keygen_jpeg_err *)cinfo->err;
+    (*cinfo->err->output_message)(cinfo);
+    longjmp(err->setjmp_buffer, 1);
 }
 
 /* Load JPEG image and scale to fit window while preserving aspect ratio */
 static XImage *load_jpeg_image(Display *display, int screen, const char *filename,
                                 int target_width, int target_height) {
     struct jpeg_decompress_struct cinfo;
-    struct jpeg_error_mgr jerr;
+    struct keygen_jpeg_err jerr;
     FILE *infile;
     JSAMPARRAY buffer;
     int row_stride;
@@ -295,7 +377,20 @@ static XImage *load_jpeg_image(Display *display, int screen, const char *filenam
     int new_width, new_height;
     int offset_x, offset_y;
 
-    cinfo.err = jpeg_std_error(&jerr);
+    image_data = NULL;
+    scaled_data = NULL;
+    infile = NULL;
+
+    cinfo.err = jpeg_std_error(&jerr.pub);
+    jerr.pub.error_exit = keygen_jpeg_error_exit;
+    if (setjmp(jerr.setjmp_buffer)) {
+        jpeg_destroy_decompress(&cinfo);
+        if (infile) fclose(infile);
+        free(image_data);
+        free(scaled_data);
+        fprintf(stderr, "JPEG decode failed: %s\n", filename);
+        return NULL;
+    }
     jpeg_create_decompress(&cinfo);
 
     if ((infile = fopen(filename, "rb")) == NULL) {
@@ -305,18 +400,38 @@ static XImage *load_jpeg_image(Display *display, int screen, const char *filenam
     }
 
     jpeg_stdio_src(&cinfo, infile);
-    jpeg_read_header(&cinfo, TRUE);
-    jpeg_start_decompress(&cinfo);
+    if (jpeg_read_header(&cinfo, TRUE) != JPEG_HEADER_OK) {
+        fprintf(stderr, "JPEG header invalid: %s\n", filename);
+        fclose(infile);
+        jpeg_destroy_decompress(&cinfo);
+        return NULL;
+    }
+    cinfo.out_color_space = JCS_RGB;
+    if (!jpeg_start_decompress(&cinfo)) {
+        fprintf(stderr, "JPEG start_decompress failed: %s\n", filename);
+        fclose(infile);
+        jpeg_destroy_decompress(&cinfo);
+        return NULL;
+    }
 
     src_width = cinfo.output_width;
     src_height = cinfo.output_height;
+
+    if (src_width <= 0 || src_height <= 0 ||
+        src_width > 16384 || src_height > 16384 ||
+        (size_t)src_width > SIZE_MAX / 3 / (size_t)src_height) {
+        fprintf(stderr, "JPEG dimensions out of range: %dx%d\n", src_width, src_height);
+        fclose(infile);
+        jpeg_destroy_decompress(&cinfo);
+        return NULL;
+    }
 
     row_stride = cinfo.output_width * cinfo.output_components;
     buffer = (*cinfo.mem->alloc_sarray)
         ((j_common_ptr)&cinfo, JPOOL_IMAGE, row_stride, 1);
 
     /* Allocate image data */
-    image_data = malloc(src_width * src_height * 3);
+    image_data = malloc((size_t)src_width * (size_t)src_height * 3);
     if (!image_data) {
         fclose(infile);
         jpeg_destroy_decompress(&cinfo);
@@ -348,7 +463,11 @@ static XImage *load_jpeg_image(Display *display, int screen, const char *filenam
     offset_y = (target_height - new_height) / 2;
 
     /* Allocate scaled data initialized to black */
-    scaled_data = calloc(target_width * target_height, 4);
+    scaled_data = calloc((size_t)target_width * (size_t)target_height, 4);
+    if (!scaled_data) {
+        free(image_data);
+        return NULL;
+    }
 
     /* Scale image to fit window */
     for (int dy = 0; dy < new_height; dy++) {
@@ -393,7 +512,6 @@ static void toggle_mute(void) {
 /* Change background image */
 static void change_bg_image(Display *display, int screen) {
     if (g_bg_image) {
-        g_bg_image->data = NULL;
         XDestroyImage(g_bg_image);
     }
 
@@ -405,13 +523,41 @@ static void change_bg_image(Display *display, int screen) {
     }
 }
 
-/* Generate a random alphanumeric key */
-static void generate_key(char *buffer, size_t length) {
-    const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    const size_t charset_len = sizeof(charset) - 1;
+static void fill_random_bytes(unsigned char *buf, size_t n) {
+#if defined(__linux__) || defined(__FreeBSD__)
+    size_t off = 0;
+    while (off < n) {
+        ssize_t r = getrandom(buf + off, n - off, 0);
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (r == 0) break;
+        off += (size_t)r;
+    }
+    if (off == n) return;
+#endif
+    for (size_t i = 0; i < n; i++) {
+        buf[i] = (unsigned char)(rand() & 0xff);
+    }
+}
 
-    for (size_t i = 0; i < length; i++) {
-        buffer[i] = charset[rand() % charset_len];
+static void generate_key(char *buffer, size_t length) {
+    static const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    static const size_t charset_len = sizeof(charset) - 1; /* 36 */
+    /* 252 is the largest multiple of 36 <= 256; bytes >= 252 are discarded
+       so we get a uniform distribution over the charset. */
+    static const unsigned int cutoff = 252;
+
+    size_t i = 0;
+    while (i < length) {
+        unsigned char block[64];
+        fill_random_bytes(block, sizeof(block));
+        for (size_t j = 0; j < sizeof(block) && i < length; j++) {
+            if (block[j] < cutoff) {
+                buffer[i++] = charset[block[j] % charset_len];
+            }
+        }
     }
     buffer[length] = '\0';
 }
@@ -429,7 +575,7 @@ static void format_key(const char *key, char *formatted, size_t formatted_size) 
 }
 
 /* Draw filled button with retro style */
-static void draw_retro_button(Display *display, Window window, GC gc, Font font,
+static void draw_retro_button(Display *display, Window window, GC gc, XFontStruct *font,
                                int x, int y, int w, int h, unsigned long fg, unsigned long bg) {
     XSetForeground(display, gc, bg);
     XFillRectangle(display, window, gc, x, y, w, h);
@@ -437,11 +583,54 @@ static void draw_retro_button(Display *display, Window window, GC gc, Font font,
     XSetForeground(display, gc, fg);
     XDrawRectangle(display, window, gc, x, y, w, h);
 
-    XFontStruct *font_info = XQueryFont(display, font);
-    int text_w = XTextWidth(font_info, "Generate", 8);
+    int text_w = XTextWidth(font, "Generate", 8);
     int text_x = x + (w - text_w) / 2;
     XDrawString(display, window, gc, text_x, y + 25, "Generate", 8);
-    XFreeFontInfo(NULL, font_info, 1);
+}
+
+static void redraw_window(Display *display, int screen, Window window, GC gc,
+                          XFontStruct *font, XftDraw *xft_draw, XftFont *xft_font,
+                          XftColor *xft_white, XColor *red_color,
+                          int btn_x, int btn_y, int btn_w, int btn_h,
+                          const char *formatted_key) {
+    if (g_bg_image) {
+        XPutImage(display, window, gc, g_bg_image, 0, 0, 0, 0,
+                  WINDOW_WIDTH, WINDOW_HEIGHT);
+    } else {
+        XSetForeground(display, gc, BlackPixel(display, screen));
+        XFillRectangle(display, window, gc, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
+    }
+
+    int title_width = XTextWidth(font, "KEY GENERATOR", 13);
+    int title_x = (WINDOW_WIDTH - title_width) / 2;
+    XSetForeground(display, gc, BlackPixel(display, screen));
+    XDrawString(display, window, gc, title_x + 1, 31, "KEY GENERATOR", 13);
+    XSetForeground(display, gc, WhitePixel(display, screen));
+    XDrawString(display, window, gc, title_x, 30, "KEY GENERATOR", 13);
+
+    int key_box_w = 300, key_box_h = 50;
+    int key_box_x = (WINDOW_WIDTH - key_box_w) / 2;
+    int key_box_y = 60;
+    XSetForeground(display, gc, BlackPixel(display, screen));
+    XFillRectangle(display, window, gc, key_box_x, key_box_y, key_box_w, key_box_h);
+    XSetForeground(display, gc, WhitePixel(display, screen));
+    XDrawRectangle(display, window, gc, key_box_x, key_box_y, key_box_w, key_box_h);
+
+    int text_width = XTextWidth(font, formatted_key, strlen(formatted_key));
+    XDrawString(display, window, gc, key_box_x + (key_box_w - text_width) / 2,
+                key_box_y + 32, formatted_key, strlen(formatted_key));
+
+    draw_retro_button(display, window, gc, font, btn_x, btn_y, btn_w, btn_h,
+                      WhitePixel(display, screen), BlackPixel(display, screen));
+
+    if (xft_font && xft_draw) {
+        XftDrawStringUtf8(xft_draw, xft_white, xft_font, 10, 450,
+                          (const FcChar8 *)KANJI_STR,
+                          (int)(sizeof(KANJI_STR) - 1));
+    }
+
+    XSetForeground(display, gc, red_color->pixel);
+    XDrawString(display, window, gc, 540, 450, SBZ_STR, 10);
 }
 
 int main(void) {
@@ -452,9 +641,11 @@ int main(void) {
     XFontStruct *font;
     Colormap colormap;
     XColor red_color;
+    int red_allocated = 0;
     XftDraw *xft_draw;
     XftFont *xft_font;
     XftColor xft_white;
+    int xft_white_allocated = 0;
     char key_buffer[KEY_LENGTH + 1];
     char formatted_key[KEY_LENGTH + 4 + 1];
 
@@ -464,6 +655,8 @@ int main(void) {
 
     /* Initialize random seed */
     srand((unsigned int)time(NULL));
+
+    mpg123_init();
 
     /* Start MP3 playback thread */
     if (init_audio(bg_music[g_music_index]) != 0) {
@@ -483,7 +676,11 @@ int main(void) {
     colormap = DefaultColormap(display, screen);
 
     /* Allocate red color */
-    XAllocNamedColor(display, colormap, "red", &red_color, &red_color);
+    if (XAllocNamedColor(display, colormap, "red", &red_color, &red_color)) {
+        red_allocated = 1;
+    } else {
+        red_color.pixel = 0xFF0000;
+    }
 
     /* Load background image */
     g_bg_image = load_jpeg_image(display, screen, bg_images[rand() % NUM_BG_IMAGES], WINDOW_WIDTH, WINDOW_HEIGHT);
@@ -498,6 +695,9 @@ int main(void) {
     XSelectInput(display, window, ExposureMask | ButtonPressMask | KeyPressMask);
     XStoreName(display, window, "Keygen - Samurai Edition");
 
+    Atom wm_delete = XInternAtom(display, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(display, window, &wm_delete, 1);
+
     /* Create graphics context */
     gc = XCreateGC(display, window, 0, NULL);
 
@@ -506,22 +706,29 @@ int main(void) {
     if (font == NULL) {
         font = XLoadQueryFont(display, "*fixed*");
     }
-    if (font != NULL) {
-        XSetFont(display, gc, font->fid);
+    if (font == NULL) {
+        fprintf(stderr, "Error: cannot load any X11 font\n");
+        XFreeGC(display, gc);
+        XDestroyWindow(display, window);
+        XCloseDisplay(display);
+        stop_audio();
+        return 1;
     }
+    XSetFont(display, gc, font->fid);
 
     btn_x = (WINDOW_WIDTH - btn_w) / 2;
     btn_y = 420;
 
     xft_draw = XftDrawCreate(display, window, DefaultVisual(display, screen), DefaultColormap(display, screen));
-    xft_font = XftFontOpenName(display, screen, "KanjiStrokeOrders:style=Regular-12");
+    xft_font = XftFontOpenName(display, screen,
+        "KanjiStrokeOrders,Noto Sans CJK JP,Noto Serif CJK JP,Sazanami Gothic,IPAGothic,TakaoPGothic:lang=ja:size=14");
     if (!xft_font) {
-        xft_font = XftFontOpenName(display, screen, "DejaVu Sans Mono-12");
+        xft_font = XftFontOpenName(display, screen, "sans:lang=ja:size=14");
     }
-    if (!xft_font) {
-        xft_font = XftFontOpenName(display, screen, "Noto Sans CJK JP-12");
+    if (XftColorAllocName(display, DefaultVisual(display, screen),
+                          DefaultColormap(display, screen), "white", &xft_white)) {
+        xft_white_allocated = 1;
     }
-    XftColorAllocName(display, DefaultVisual(display, screen), DefaultColormap(display, screen), "white", &xft_white);
 
     /* Map window */
     XMapWindow(display, window);
@@ -537,105 +744,26 @@ int main(void) {
         XNextEvent(display, &event);
 
         switch (event.type) {
-            case Expose: {
-                /* Draw background image */
-                if (g_bg_image) {
-                    XPutImage(display, window, gc, g_bg_image, 0, 0, 0, 0,
-                              WINDOW_WIDTH, WINDOW_HEIGHT);
-                } else {
-                    XSetForeground(display, gc, BlackPixel(display, screen));
-                    XFillRectangle(display, window, gc, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
-                }
-
-                /* Draw title with shadow effect */
-                int title_width = XTextWidth(font, "KEY GENERATOR", 13);
-                int title_x = (WINDOW_WIDTH - title_width) / 2;
-                XSetForeground(display, gc, BlackPixel(display, screen));
-                XDrawString(display, window, gc, title_x + 1, 31, "KEY GENERATOR", 13);
-                XSetForeground(display, gc, WhitePixel(display, screen));
-                XDrawString(display, window, gc, title_x, 30, "KEY GENERATOR", 13);
-
-                /* Draw key in a retro box */
-                int key_box_w = 300, key_box_h = 50;
-                int key_box_x = (WINDOW_WIDTH - key_box_w) / 2;
-                int key_box_y = 60;
-
-                XSetForeground(display, gc, BlackPixel(display, screen));
-                XFillRectangle(display, window, gc, key_box_x, key_box_y, key_box_w, key_box_h);
-
-                XSetForeground(display, gc, WhitePixel(display, screen));
-                XDrawRectangle(display, window, gc, key_box_x, key_box_y, key_box_w, key_box_h);
-
-                int text_width = XTextWidth(font, formatted_key, strlen(formatted_key));
-                XDrawString(display, window, gc, key_box_x + (key_box_w - text_width) / 2,
-                            key_box_y + 32, formatted_key, strlen(formatted_key));
-
-                /* Draw Generate button */
-                draw_retro_button(display, window, gc, font->fid, btn_x, btn_y, btn_w, btn_h,
-                                  WhitePixel(display, screen), BlackPixel(display, screen));
-
-                if (xft_font && xft_draw) {
-                    XftDrawStringUtf8(xft_draw, &xft_white, xft_font, 10, 450,
-                                      (const FcChar8 *)KANJI_STR, 21);
-                }
-
-                /* Draw copyright in red */
-                XSetForeground(display, gc, red_color.pixel);
-                XDrawString(display, window, gc, 540, 450, SBZ_STR, 10);
-
+            case Expose:
+                redraw_window(display, screen, window, gc, font,
+                              xft_draw, xft_font, &xft_white, &red_color,
+                              btn_x, btn_y, btn_w, btn_h, formatted_key);
                 break;
-            }
 
             case ButtonPress: {
                 int x = event.xbutton.x;
                 int y = event.xbutton.y;
 
-                /* Check if Generate button was clicked */
-                if (x >= btn_x && x <= btn_x + btn_w &&
-                    y >= btn_y && y <= btn_y + btn_h) {
+                if (x >= btn_x && x < btn_x + btn_w &&
+                    y >= btn_y && y < btn_y + btn_h) {
                     generate_key(key_buffer, KEY_LENGTH);
                     format_key(key_buffer, formatted_key, sizeof(formatted_key));
                     printf("Generated key: %s\n", formatted_key);
 
-                    /* Redraw */
-                    XClearWindow(display, window);
-
-                    if (g_bg_image) {
-                        XPutImage(display, window, gc, g_bg_image, 0, 0, 0, 0,
-                                  WINDOW_WIDTH, WINDOW_HEIGHT);
-                    }
-
-                    int title_width = XTextWidth(font, "KEY GENERATOR", 13);
-                    int title_x = (WINDOW_WIDTH - title_width) / 2;
-                    XSetForeground(display, gc, BlackPixel(display, screen));
-                    XDrawString(display, window, gc, title_x + 1, 31, "KEY GENERATOR", 13);
-                    XSetForeground(display, gc, WhitePixel(display, screen));
-                    XDrawString(display, window, gc, title_x, 30, "KEY GENERATOR", 13);
-
-                    int key_box_w = 300, key_box_h = 50;
-                    int key_box_x = (WINDOW_WIDTH - key_box_w) / 2;
-                    int key_box_y = 60;
-                    XSetForeground(display, gc, BlackPixel(display, screen));
-                    XFillRectangle(display, window, gc, key_box_x, key_box_y, key_box_w, key_box_h);
-                    XSetForeground(display, gc, WhitePixel(display, screen));
-                    XDrawRectangle(display, window, gc, key_box_x, key_box_y, key_box_w, key_box_h);
-
-                    int text_width = XTextWidth(font, formatted_key, strlen(formatted_key));
-                    XDrawString(display, window, gc, key_box_x + (key_box_w - text_width) / 2,
-                                key_box_y + 32, formatted_key, strlen(formatted_key));
-
-                    draw_retro_button(display, window, gc, font->fid, btn_x, btn_y, btn_w, btn_h,
-                                      BlackPixel(display, screen), WhitePixel(display, screen));
-
-                    XSetForeground(display, gc, red_color.pixel);
-                    XDrawString(display, window, gc, 540, 450, SBZ_STR, 10);
-
-                    if (xft_font && xft_draw) {
-                        XftDrawStringUtf8(xft_draw, &xft_white, xft_font, 10, 450,
-                                          (const FcChar8 *)KANJI_STR, 21);
-                    }
+                    redraw_window(display, screen, window, gc, font,
+                                  xft_draw, xft_font, &xft_white, &red_color,
+                                  btn_x, btn_y, btn_w, btn_h, formatted_key);
                 }
-
                 break;
             }
 
@@ -646,17 +774,15 @@ int main(void) {
                 }
                 if (key == XK_m || key == XK_M) {
                     toggle_mute();
-                    XEvent expose;
-                    expose.type = Expose;
-                    expose.xexpose.window = window;
-                    XSendEvent(display, window, False, ExposureMask, &expose);
+                    redraw_window(display, screen, window, gc, font,
+                                  xft_draw, xft_font, &xft_white, &red_color,
+                                  btn_x, btn_y, btn_w, btn_h, formatted_key);
                 }
                 if (key == XK_s || key == XK_S) {
                     change_bg_image(display, screen);
-                    XEvent expose;
-                    expose.type = Expose;
-                    expose.xexpose.window = window;
-                    XSendEvent(display, window, False, ExposureMask, &expose);
+                    redraw_window(display, screen, window, gc, font,
+                                  xft_draw, xft_font, &xft_white, &red_color,
+                                  btn_x, btn_y, btn_w, btn_h, formatted_key);
                 }
                 if (key == XK_n || key == XK_N) {
                     change_bg_music();
@@ -665,27 +791,36 @@ int main(void) {
             }
 
             case ClientMessage:
-                goto cleanup;
+                if ((Atom)event.xclient.data.l[0] == wm_delete) {
+                    goto cleanup;
+                }
+                break;
         }
     }
 
 cleanup:
     stop_audio();
+    mpg123_exit();
 
     if (g_bg_image) {
-        g_bg_image->data = NULL;
         XDestroyImage(g_bg_image);
     }
 
+    if (xft_white_allocated) {
+        XftColorFree(display, DefaultVisual(display, screen),
+                     DefaultColormap(display, screen), &xft_white);
+    }
     if (xft_draw) {
         XftDrawDestroy(xft_draw);
     }
     if (xft_font) {
         XftFontClose(display, xft_font);
     }
-    if (font != NULL) {
-        XFreeFont(display, font);
+    if (red_allocated) {
+        unsigned long pixels = red_color.pixel;
+        XFreeColors(display, colormap, &pixels, 1, 0);
     }
+    XFreeFont(display, font);
     XFreeGC(display, gc);
     XDestroyWindow(display, window);
     XCloseDisplay(display);

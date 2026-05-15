@@ -639,7 +639,8 @@ static void redraw_window(Display *display, int screen, Window window, GC gc,
 
     if (xft_font && xft_draw) {
         XftDrawStringUtf8(xft_draw, xft_white, xft_font, 10, 450,
-                          (const FcChar8 *)KANJI_STR, 21);
+                          (const FcChar8 *)KANJI_STR,
+                          (int)(sizeof(KANJI_STR) - 1));
     }
 
     XSetForeground(display, gc, red_color->pixel);

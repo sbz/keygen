@@ -546,9 +546,15 @@ int main(void) {
     if (font == NULL) {
         font = XLoadQueryFont(display, "*fixed*");
     }
-    if (font != NULL) {
-        XSetFont(display, gc, font->fid);
+    if (font == NULL) {
+        fprintf(stderr, "Error: cannot load any X11 font\n");
+        XFreeGC(display, gc);
+        XDestroyWindow(display, window);
+        XCloseDisplay(display);
+        stop_audio();
+        return 1;
     }
+    XSetFont(display, gc, font->fid);
 
     btn_x = (WINDOW_WIDTH - btn_w) / 2;
     btn_y = 420;
@@ -723,9 +729,7 @@ cleanup:
     if (xft_font) {
         XftFontClose(display, xft_font);
     }
-    if (font != NULL) {
-        XFreeFont(display, font);
-    }
+    XFreeFont(display, font);
     XFreeGC(display, gc);
     XDestroyWindow(display, window);
     XCloseDisplay(display);

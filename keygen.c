@@ -344,15 +344,19 @@ static void format_key(const char *key, char *formatted, size_t formatted_size) 
 }
 
 /* Draw filled button with retro style */
-static void draw_retro_button(Display *display, Window window, GC gc, int x, int y,
-                               int w, int h, unsigned long fg, unsigned long bg) {
+static void draw_retro_button(Display *display, Window window, GC gc, Font font,
+                               int x, int y, int w, int h, unsigned long fg, unsigned long bg) {
     XSetForeground(display, gc, bg);
     XFillRectangle(display, window, gc, x, y, w, h);
 
     XSetForeground(display, gc, fg);
     XDrawRectangle(display, window, gc, x, y, w, h);
 
-    XDrawString(display, window, gc, x + 35, y + 25, "Generate", 8);
+    XFontStruct *font_info = XQueryFont(display, font);
+    int text_w = XTextWidth(font_info, "Generate", 8);
+    int text_x = x + (w - text_w) / 2;
+    XDrawString(display, window, gc, text_x, y + 25, "Generate", 8);
+    XFreeFontInfo(NULL, font_info, 1);
 }
 
 int main(void) {
@@ -370,7 +374,8 @@ int main(void) {
     char formatted_key[KEY_LENGTH + 4 + 1];
 
     /* Button region */
-    int btn_x = 245, btn_y = 420, btn_w = 150, btn_h = 40;
+    int btn_w = 150, btn_h = 40;
+    int btn_x, btn_y;
 
     /* Initialize random seed */
     srand((unsigned int)time(NULL));
@@ -420,6 +425,9 @@ int main(void) {
         XSetFont(display, gc, font->fid);
     }
 
+    btn_x = (WINDOW_WIDTH - btn_w) / 2;
+    btn_y = 420;
+
     xft_draw = XftDrawCreate(display, window, DefaultVisual(display, screen), DefaultColormap(display, screen));
     xft_font = XftFontOpenName(display, screen, "KanjiStrokeOrders:style=Regular-12");
     if (!xft_font) {
@@ -455,10 +463,12 @@ int main(void) {
                 }
 
                 /* Draw title with shadow effect */
+                int title_width = XTextWidth(font, "KEY GENERATOR", 13);
+                int title_x = (WINDOW_WIDTH - title_width) / 2;
                 XSetForeground(display, gc, BlackPixel(display, screen));
-                XDrawString(display, window, gc, 321, 31, "KEY GENERATOR", 13);
+                XDrawString(display, window, gc, title_x + 1, 31, "KEY GENERATOR", 13);
                 XSetForeground(display, gc, WhitePixel(display, screen));
-                XDrawString(display, window, gc, 320, 30, "KEY GENERATOR", 13);
+                XDrawString(display, window, gc, title_x, 30, "KEY GENERATOR", 13);
 
                 /* Draw key in a retro box */
                 int key_box_w = 300, key_box_h = 50;
@@ -476,7 +486,7 @@ int main(void) {
                             key_box_y + 32, formatted_key, strlen(formatted_key));
 
                 /* Draw Generate button */
-                draw_retro_button(display, window, gc, btn_x, btn_y, btn_w, btn_h,
+                draw_retro_button(display, window, gc, font->fid, btn_x, btn_y, btn_w, btn_h,
                                   WhitePixel(display, screen), BlackPixel(display, screen));
 
                 if (xft_font && xft_draw) {
@@ -510,10 +520,12 @@ int main(void) {
                                   WINDOW_WIDTH, WINDOW_HEIGHT);
                     }
 
+                    int title_width = XTextWidth(font, "KEY GENERATOR", 13);
+                    int title_x = (WINDOW_WIDTH - title_width) / 2;
                     XSetForeground(display, gc, BlackPixel(display, screen));
-                    XDrawString(display, window, gc, 321, 31, "KEY GENERATOR", 13);
+                    XDrawString(display, window, gc, title_x + 1, 31, "KEY GENERATOR", 13);
                     XSetForeground(display, gc, WhitePixel(display, screen));
-                    XDrawString(display, window, gc, 320, 30, "KEY GENERATOR", 13);
+                    XDrawString(display, window, gc, title_x, 30, "KEY GENERATOR", 13);
 
                     int key_box_w = 300, key_box_h = 50;
                     int key_box_x = (WINDOW_WIDTH - key_box_w) / 2;
@@ -527,7 +539,7 @@ int main(void) {
                     XDrawString(display, window, gc, key_box_x + (key_box_w - text_width) / 2,
                                 key_box_y + 32, formatted_key, strlen(formatted_key));
 
-                    draw_retro_button(display, window, gc, btn_x, btn_y, btn_w, btn_h,
+                    draw_retro_button(display, window, gc, font->fid, btn_x, btn_y, btn_w, btn_h,
                                       BlackPixel(display, screen), WhitePixel(display, screen));
 
                     XSetForeground(display, gc, red_color.pixel);

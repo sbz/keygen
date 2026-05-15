@@ -341,12 +341,22 @@ static XImage *load_jpeg_image(Display *display, int screen, const char *filenam
     src_width = cinfo.output_width;
     src_height = cinfo.output_height;
 
+    /* Reject pathological dimensions to avoid size_t overflow below */
+    if (src_width <= 0 || src_height <= 0 ||
+        src_width > 16384 || src_height > 16384 ||
+        (size_t)src_width > SIZE_MAX / 3 / (size_t)src_height) {
+        fprintf(stderr, "JPEG dimensions out of range: %dx%d\n", src_width, src_height);
+        fclose(infile);
+        jpeg_destroy_decompress(&cinfo);
+        return NULL;
+    }
+
     row_stride = cinfo.output_width * cinfo.output_components;
     buffer = (*cinfo.mem->alloc_sarray)
         ((j_common_ptr)&cinfo, JPOOL_IMAGE, row_stride, 1);
 
     /* Allocate image data */
-    image_data = malloc(src_width * src_height * 3);
+    image_data = malloc((size_t)src_width * (size_t)src_height * 3);
     if (!image_data) {
         fclose(infile);
         jpeg_destroy_decompress(&cinfo);

@@ -13,6 +13,7 @@
 #include <math.h>
 #include <setjmp.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #ifdef __FreeBSD__
 #include <fcntl.h>
 #include <unistd.h>
@@ -37,8 +38,8 @@ typedef struct {
 #endif
     mpg123_handle *mh;
     pthread_t thread;
-    int running;
-    int muted;
+    atomic_int running;
+    atomic_int muted;
     char *mp3_file;
 } audio_state_t;
 

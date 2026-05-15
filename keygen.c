@@ -735,12 +735,13 @@ int main(void) {
     btn_y = 420;
 
     xft_draw = XftDrawCreate(display, window, DefaultVisual(display, screen), DefaultColormap(display, screen));
-    xft_font = XftFontOpenName(display, screen, "KanjiStrokeOrders:style=Regular-12");
+    /* List several Japanese-capable families and require lang=ja so
+       fontconfig will not silently substitute a Latin font when none
+       of the named families is installed. */
+    xft_font = XftFontOpenName(display, screen,
+        "KanjiStrokeOrders,Noto Sans CJK JP,Noto Serif CJK JP,Sazanami Gothic,IPAGothic,TakaoPGothic:lang=ja:size=14");
     if (!xft_font) {
-        xft_font = XftFontOpenName(display, screen, "DejaVu Sans Mono-12");
-    }
-    if (!xft_font) {
-        xft_font = XftFontOpenName(display, screen, "Noto Sans CJK JP-12");
+        xft_font = XftFontOpenName(display, screen, "sans:lang=ja:size=14");
     }
     if (XftColorAllocName(display, DefaultVisual(display, screen),
                           DefaultColormap(display, screen), "white", &xft_white)) {

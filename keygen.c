@@ -248,6 +248,9 @@ static void *audio_thread(void *arg) {
 /* Initialize audio playback */
 static int init_audio(const char *mp3_file) {
     g_audio.mp3_file = strdup(mp3_file);
+    if (!g_audio.mp3_file) {
+        return -1;
+    }
     g_audio.running = 1;
     g_audio.muted = 0;
     g_audio.alsa_pcm = NULL;
@@ -388,7 +391,11 @@ static XImage *load_jpeg_image(Display *display, int screen, const char *filenam
     offset_y = (target_height - new_height) / 2;
 
     /* Allocate scaled data initialized to black */
-    scaled_data = calloc(target_width * target_height, 4);
+    scaled_data = calloc((size_t)target_width * (size_t)target_height, 4);
+    if (!scaled_data) {
+        free(image_data);
+        return NULL;
+    }
 
     /* Scale image to fit window */
     for (int dy = 0; dy < new_height; dy++) {
@@ -522,8 +529,10 @@ int main(void) {
     Window root = RootWindow(display, screen);
     colormap = DefaultColormap(display, screen);
 
-    /* Allocate red color */
-    XAllocNamedColor(display, colormap, "red", &red_color, &red_color);
+    /* Allocate red color (fall back to a fixed RGB pixel if the named lookup fails) */
+    if (!XAllocNamedColor(display, colormap, "red", &red_color, &red_color)) {
+        red_color.pixel = 0xFF0000;
+    }
 
     /* Load background image */
     g_bg_image = load_jpeg_image(display, screen, bg_images[rand() % NUM_BG_IMAGES], WINDOW_WIDTH, WINDOW_HEIGHT);

@@ -49,3 +49,9 @@ The application creates an X11 window with:
 - It display the image in the img/ folder as background
 
 Each time you click the button, a new random key is generated using `rand()` seeded with the current time.
+
+## Visual
+
+Here what its looks like, but the experience is way better with the 8-bit background sound
+
+![keygen visual](./assets/keygen.gif)

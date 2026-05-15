@@ -641,9 +641,11 @@ int main(void) {
     XFontStruct *font;
     Colormap colormap;
     XColor red_color;
+    int red_allocated = 0;
     XftDraw *xft_draw;
     XftFont *xft_font;
     XftColor xft_white;
+    int xft_white_allocated = 0;
     char key_buffer[KEY_LENGTH + 1];
     char formatted_key[KEY_LENGTH + 4 + 1];
 
@@ -675,7 +677,9 @@ int main(void) {
     colormap = DefaultColormap(display, screen);
 
     /* Allocate red color (fall back to a fixed RGB pixel if the named lookup fails) */
-    if (!XAllocNamedColor(display, colormap, "red", &red_color, &red_color)) {
+    if (XAllocNamedColor(display, colormap, "red", &red_color, &red_color)) {
+        red_allocated = 1;
+    } else {
         red_color.pixel = 0xFF0000;
     }
 
@@ -725,7 +729,10 @@ int main(void) {
     if (!xft_font) {
         xft_font = XftFontOpenName(display, screen, "Noto Sans CJK JP-12");
     }
-    XftColorAllocName(display, DefaultVisual(display, screen), DefaultColormap(display, screen), "white", &xft_white);
+    if (XftColorAllocName(display, DefaultVisual(display, screen),
+                          DefaultColormap(display, screen), "white", &xft_white)) {
+        xft_white_allocated = 1;
+    }
 
     /* Map window */
     XMapWindow(display, window);
@@ -805,11 +812,19 @@ cleanup:
         XDestroyImage(g_bg_image);
     }
 
+    if (xft_white_allocated) {
+        XftColorFree(display, DefaultVisual(display, screen),
+                     DefaultColormap(display, screen), &xft_white);
+    }
     if (xft_draw) {
         XftDrawDestroy(xft_draw);
     }
     if (xft_font) {
         XftFontClose(display, xft_font);
+    }
+    if (red_allocated) {
+        unsigned long pixels = red_color.pixel;
+        XFreeColors(display, colormap, &pixels, 1, 0);
     }
     XFreeFont(display, font);
     XFreeGC(display, gc);

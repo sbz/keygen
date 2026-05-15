@@ -138,7 +138,10 @@ static void *audio_thread(void *arg) {
         if (state->muted) {
             memset(audio_buffer, 0, done);
         } else {
-            memcpy(audio_buffer, decode_buffer, done);
+            int16_t *decoded = (int16_t *)decode_buffer;
+            for (int i = 0; i < samples; i++) {
+                audio_buffer[i] = decoded[i] / 4;
+            }
         }
 
         snd_pcm_sframes_t frames = snd_pcm_writei(state->pcm, audio_buffer, samples / channels);
@@ -474,7 +477,7 @@ int main(void) {
 
                 /* Draw Generate button */
                 draw_retro_button(display, window, gc, btn_x, btn_y, btn_w, btn_h,
-                                  BlackPixel(display, screen), WhitePixel(display, screen));
+                                  WhitePixel(display, screen), BlackPixel(display, screen));
 
                 if (xft_font && xft_draw) {
                     XftDrawStringUtf8(xft_draw, &xft_white, xft_font, 10, 470,

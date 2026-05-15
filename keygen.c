@@ -14,6 +14,10 @@
 #include <setjmp.h>
 #include <stdint.h>
 #include <stdatomic.h>
+#include <errno.h>
+#if defined(__linux__) || defined(__FreeBSD__)
+#include <sys/random.h>
+#endif
 #ifdef __FreeBSD__
 #include <fcntl.h>
 #include <unistd.h>
@@ -472,13 +476,42 @@ static void change_bg_image(Display *display, int screen) {
     }
 }
 
-/* Generate a random alphanumeric key */
-static void generate_key(char *buffer, size_t length) {
-    const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    const size_t charset_len = sizeof(charset) - 1;
+/* Fill buf with `n` random bytes from the OS CSPRNG, falling back to rand() */
+static void fill_random_bytes(unsigned char *buf, size_t n) {
+#if defined(__linux__) || defined(__FreeBSD__)
+    size_t off = 0;
+    while (off < n) {
+        ssize_t r = getrandom(buf + off, n - off, 0);
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        off += (size_t)r;
+    }
+    if (off == n) return;
+#endif
+    for (size_t i = 0; i < n; i++) {
+        buf[i] = (unsigned char)(rand() & 0xff);
+    }
+}
 
-    for (size_t i = 0; i < length; i++) {
-        buffer[i] = charset[rand() % charset_len];
+/* Generate a random alphanumeric key with uniform distribution */
+static void generate_key(char *buffer, size_t length) {
+    static const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    static const size_t charset_len = sizeof(charset) - 1; /* 36 */
+    /* 252 is the largest multiple of 36 <= 256; bytes >= 252 are discarded
+       so we get a uniform distribution over the charset. */
+    static const unsigned int cutoff = 252;
+
+    size_t i = 0;
+    while (i < length) {
+        unsigned char block[64];
+        fill_random_bytes(block, sizeof(block));
+        for (size_t j = 0; j < sizeof(block) && i < length; j++) {
+            if (block[j] < cutoff) {
+                buffer[i++] = charset[block[j] % charset_len];
+            }
+        }
     }
     buffer[length] = '\0';
 }

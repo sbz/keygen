@@ -440,7 +440,6 @@ static void toggle_mute(void) {
 /* Change background image */
 static void change_bg_image(Display *display, int screen) {
     if (g_bg_image) {
-        g_bg_image->data = NULL;
         XDestroyImage(g_bg_image);
     }
 
@@ -728,7 +727,6 @@ cleanup:
     stop_audio();
 
     if (g_bg_image) {
-        g_bg_image->data = NULL;
         XDestroyImage(g_bg_image);
     }
 

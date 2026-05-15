@@ -168,8 +168,10 @@ static void *audio_thread(void *arg) {
         if (err < 0) {
             fprintf(stderr, "Cannot set audio params: %s\n", snd_strerror(err));
             snd_pcm_close(state->alsa_pcm);
+            state->alsa_pcm = NULL;
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
+            state->mh = NULL;
             return NULL;
         }
     }

@@ -511,6 +511,51 @@ static void draw_retro_button(Display *display, Window window, GC gc, Font font,
     XFreeFontInfo(NULL, font_info, 1);
 }
 
+/* Render the full UI. Caller owns all the resources passed in. */
+static void redraw_window(Display *display, int screen, Window window, GC gc,
+                          XFontStruct *font, XftDraw *xft_draw, XftFont *xft_font,
+                          XftColor *xft_white, XColor *red_color,
+                          int btn_x, int btn_y, int btn_w, int btn_h,
+                          const char *formatted_key) {
+    if (g_bg_image) {
+        XPutImage(display, window, gc, g_bg_image, 0, 0, 0, 0,
+                  WINDOW_WIDTH, WINDOW_HEIGHT);
+    } else {
+        XSetForeground(display, gc, BlackPixel(display, screen));
+        XFillRectangle(display, window, gc, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
+    }
+
+    int title_width = XTextWidth(font, "KEY GENERATOR", 13);
+    int title_x = (WINDOW_WIDTH - title_width) / 2;
+    XSetForeground(display, gc, BlackPixel(display, screen));
+    XDrawString(display, window, gc, title_x + 1, 31, "KEY GENERATOR", 13);
+    XSetForeground(display, gc, WhitePixel(display, screen));
+    XDrawString(display, window, gc, title_x, 30, "KEY GENERATOR", 13);
+
+    int key_box_w = 300, key_box_h = 50;
+    int key_box_x = (WINDOW_WIDTH - key_box_w) / 2;
+    int key_box_y = 60;
+    XSetForeground(display, gc, BlackPixel(display, screen));
+    XFillRectangle(display, window, gc, key_box_x, key_box_y, key_box_w, key_box_h);
+    XSetForeground(display, gc, WhitePixel(display, screen));
+    XDrawRectangle(display, window, gc, key_box_x, key_box_y, key_box_w, key_box_h);
+
+    int text_width = XTextWidth(font, formatted_key, strlen(formatted_key));
+    XDrawString(display, window, gc, key_box_x + (key_box_w - text_width) / 2,
+                key_box_y + 32, formatted_key, strlen(formatted_key));
+
+    draw_retro_button(display, window, gc, font->fid, btn_x, btn_y, btn_w, btn_h,
+                      WhitePixel(display, screen), BlackPixel(display, screen));
+
+    if (xft_font && xft_draw) {
+        XftDrawStringUtf8(xft_draw, xft_white, xft_font, 10, 450,
+                          (const FcChar8 *)KANJI_STR, 21);
+    }
+
+    XSetForeground(display, gc, red_color->pixel);
+    XDrawString(display, window, gc, 540, 450, SBZ_STR, 10);
+}
+
 int main(void) {
     Display *display;
     Window window;
@@ -619,105 +664,26 @@ int main(void) {
         XNextEvent(display, &event);
 
         switch (event.type) {
-            case Expose: {
-                /* Draw background image */
-                if (g_bg_image) {
-                    XPutImage(display, window, gc, g_bg_image, 0, 0, 0, 0,
-                              WINDOW_WIDTH, WINDOW_HEIGHT);
-                } else {
-                    XSetForeground(display, gc, BlackPixel(display, screen));
-                    XFillRectangle(display, window, gc, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
-                }
-
-                /* Draw title with shadow effect */
-                int title_width = XTextWidth(font, "KEY GENERATOR", 13);
-                int title_x = (WINDOW_WIDTH - title_width) / 2;
-                XSetForeground(display, gc, BlackPixel(display, screen));
-                XDrawString(display, window, gc, title_x + 1, 31, "KEY GENERATOR", 13);
-                XSetForeground(display, gc, WhitePixel(display, screen));
-                XDrawString(display, window, gc, title_x, 30, "KEY GENERATOR", 13);
-
-                /* Draw key in a retro box */
-                int key_box_w = 300, key_box_h = 50;
-                int key_box_x = (WINDOW_WIDTH - key_box_w) / 2;
-                int key_box_y = 60;
-
-                XSetForeground(display, gc, BlackPixel(display, screen));
-                XFillRectangle(display, window, gc, key_box_x, key_box_y, key_box_w, key_box_h);
-
-                XSetForeground(display, gc, WhitePixel(display, screen));
-                XDrawRectangle(display, window, gc, key_box_x, key_box_y, key_box_w, key_box_h);
-
-                int text_width = XTextWidth(font, formatted_key, strlen(formatted_key));
-                XDrawString(display, window, gc, key_box_x + (key_box_w - text_width) / 2,
-                            key_box_y + 32, formatted_key, strlen(formatted_key));
-
-                /* Draw Generate button */
-                draw_retro_button(display, window, gc, font->fid, btn_x, btn_y, btn_w, btn_h,
-                                  WhitePixel(display, screen), BlackPixel(display, screen));
-
-                if (xft_font && xft_draw) {
-                    XftDrawStringUtf8(xft_draw, &xft_white, xft_font, 10, 450,
-                                      (const FcChar8 *)KANJI_STR, 21);
-                }
-
-                /* Draw copyright in red */
-                XSetForeground(display, gc, red_color.pixel);
-                XDrawString(display, window, gc, 540, 450, SBZ_STR, 10);
-
+            case Expose:
+                redraw_window(display, screen, window, gc, font,
+                              xft_draw, xft_font, &xft_white, &red_color,
+                              btn_x, btn_y, btn_w, btn_h, formatted_key);
                 break;
-            }
 
             case ButtonPress: {
                 int x = event.xbutton.x;
                 int y = event.xbutton.y;
 
-                /* Check if Generate button was clicked */
                 if (x >= btn_x && x <= btn_x + btn_w &&
                     y >= btn_y && y <= btn_y + btn_h) {
                     generate_key(key_buffer, KEY_LENGTH);
                     format_key(key_buffer, formatted_key, sizeof(formatted_key));
                     printf("Generated key: %s\n", formatted_key);
 
-                    /* Redraw */
-                    XClearWindow(display, window);
-
-                    if (g_bg_image) {
-                        XPutImage(display, window, gc, g_bg_image, 0, 0, 0, 0,
-                                  WINDOW_WIDTH, WINDOW_HEIGHT);
-                    }
-
-                    int title_width = XTextWidth(font, "KEY GENERATOR", 13);
-                    int title_x = (WINDOW_WIDTH - title_width) / 2;
-                    XSetForeground(display, gc, BlackPixel(display, screen));
-                    XDrawString(display, window, gc, title_x + 1, 31, "KEY GENERATOR", 13);
-                    XSetForeground(display, gc, WhitePixel(display, screen));
-                    XDrawString(display, window, gc, title_x, 30, "KEY GENERATOR", 13);
-
-                    int key_box_w = 300, key_box_h = 50;
-                    int key_box_x = (WINDOW_WIDTH - key_box_w) / 2;
-                    int key_box_y = 60;
-                    XSetForeground(display, gc, BlackPixel(display, screen));
-                    XFillRectangle(display, window, gc, key_box_x, key_box_y, key_box_w, key_box_h);
-                    XSetForeground(display, gc, WhitePixel(display, screen));
-                    XDrawRectangle(display, window, gc, key_box_x, key_box_y, key_box_w, key_box_h);
-
-                    int text_width = XTextWidth(font, formatted_key, strlen(formatted_key));
-                    XDrawString(display, window, gc, key_box_x + (key_box_w - text_width) / 2,
-                                key_box_y + 32, formatted_key, strlen(formatted_key));
-
-                    draw_retro_button(display, window, gc, font->fid, btn_x, btn_y, btn_w, btn_h,
-                                      BlackPixel(display, screen), WhitePixel(display, screen));
-
-                    XSetForeground(display, gc, red_color.pixel);
-                    XDrawString(display, window, gc, 540, 450, SBZ_STR, 10);
-
-                    if (xft_font && xft_draw) {
-                        XftDrawStringUtf8(xft_draw, &xft_white, xft_font, 10, 450,
-                                          (const FcChar8 *)KANJI_STR, 21);
-                    }
+                    redraw_window(display, screen, window, gc, font,
+                                  xft_draw, xft_font, &xft_white, &red_color,
+                                  btn_x, btn_y, btn_w, btn_h, formatted_key);
                 }
-
                 break;
             }
 

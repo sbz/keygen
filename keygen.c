@@ -496,7 +496,7 @@ static void format_key(const char *key, char *formatted, size_t formatted_size) 
 }
 
 /* Draw filled button with retro style */
-static void draw_retro_button(Display *display, Window window, GC gc, Font font,
+static void draw_retro_button(Display *display, Window window, GC gc, XFontStruct *font,
                                int x, int y, int w, int h, unsigned long fg, unsigned long bg) {
     XSetForeground(display, gc, bg);
     XFillRectangle(display, window, gc, x, y, w, h);
@@ -504,11 +504,9 @@ static void draw_retro_button(Display *display, Window window, GC gc, Font font,
     XSetForeground(display, gc, fg);
     XDrawRectangle(display, window, gc, x, y, w, h);
 
-    XFontStruct *font_info = XQueryFont(display, font);
-    int text_w = XTextWidth(font_info, "Generate", 8);
+    int text_w = XTextWidth(font, "Generate", 8);
     int text_x = x + (w - text_w) / 2;
     XDrawString(display, window, gc, text_x, y + 25, "Generate", 8);
-    XFreeFontInfo(NULL, font_info, 1);
 }
 
 /* Render the full UI. Caller owns all the resources passed in. */
@@ -544,7 +542,7 @@ static void redraw_window(Display *display, int screen, Window window, GC gc,
     XDrawString(display, window, gc, key_box_x + (key_box_w - text_width) / 2,
                 key_box_y + 32, formatted_key, strlen(formatted_key));
 
-    draw_retro_button(display, window, gc, font->fid, btn_x, btn_y, btn_w, btn_h,
+    draw_retro_button(display, window, gc, font, btn_x, btn_y, btn_w, btn_h,
                       WhitePixel(display, screen), BlackPixel(display, screen));
 
     if (xft_font && xft_draw) {

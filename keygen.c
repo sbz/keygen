@@ -11,6 +11,12 @@
 #include <time.h>
 #include <pthread.h>
 #include <math.h>
+#ifdef __FreeBSD__
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/soundcard.h>
+#include <sys/ioctl.h>
+#endif
 
 #define WINDOW_WIDTH 640
 #define WINDOW_HEIGHT 480
@@ -22,7 +28,11 @@
 
 /* Global state for audio thread */
 typedef struct {
-    snd_pcm_t *pcm;
+    snd_pcm_t *alsa_pcm;
+#ifdef __FreeBSD__
+    int oss_fd;
+    int use_oss;
+#endif
     mpg123_handle *mh;
     pthread_t thread;
     int running;
@@ -90,28 +100,75 @@ static void *audio_thread(void *arg) {
     printf("MP3: %ld Hz, %d channels\n", rate, channels);
 
     /* Configure ALSA */
-    err = snd_pcm_open(&state->pcm, "default", SND_PCM_STREAM_PLAYBACK, 0);
+    err = snd_pcm_open(&state->alsa_pcm, "default", SND_PCM_STREAM_PLAYBACK, 0);
     if (err < 0) {
+#ifdef __FreeBSD__
+        fprintf(stderr, "ALSA not available, trying OSS: %s\n", snd_strerror(err));
+        state->alsa_pcm = NULL;
+        state->use_oss = 1;
+
+        state->oss_fd = open("/dev/dsp", O_WRONLY, 0);
+        if (state->oss_fd < 0) {
+            fprintf(stderr, "Cannot open OSS device /dev/dsp\n");
+            mpg123_close(state->mh);
+            mpg123_delete(state->mh);
+            mpg123_exit();
+            return NULL;
+        }
+
+        int fmt = AFMT_S16_LE;
+        if (ioctl(state->oss_fd, SNDCTL_DSP_SETFMT, &fmt) < 0) {
+            fprintf(stderr, "Cannot set OSS format\n");
+            close(state->oss_fd);
+            mpg123_close(state->mh);
+            mpg123_delete(state->mh);
+            mpg123_exit();
+            return NULL;
+        }
+
+        int oss_rate = rate;
+        if (ioctl(state->oss_fd, SNDCTL_DSP_SPEED, &oss_rate) < 0) {
+            fprintf(stderr, "Cannot set OSS sample rate\n");
+            close(state->oss_fd);
+            mpg123_close(state->mh);
+            mpg123_delete(state->mh);
+            mpg123_exit();
+            return NULL;
+        }
+
+        int oss_channels = channels;
+        if (ioctl(state->oss_fd, SNDCTL_DSP_CHANNELS, &oss_channels) < 0) {
+            fprintf(stderr, "Cannot set OSS channels\n");
+            close(state->oss_fd);
+            mpg123_close(state->mh);
+            mpg123_delete(state->mh);
+            mpg123_exit();
+            return NULL;
+        }
+
+        printf("OSS: %ld Hz, %d channels\n", rate, channels);
+#else
         fprintf(stderr, "Cannot open audio device: %s\n", snd_strerror(err));
         mpg123_close(state->mh);
         mpg123_delete(state->mh);
         return NULL;
-    }
-
-    snd_pcm_format_t format = SND_PCM_FORMAT_S16;
-    err = snd_pcm_set_params(state->pcm,
-                             format,
-                             SND_PCM_ACCESS_RW_INTERLEAVED,
-                             channels,
-                             rate,
-                             1,
-                             latency_us);
-    if (err < 0) {
-        fprintf(stderr, "Cannot set audio params: %s\n", snd_strerror(err));
-        snd_pcm_close(state->pcm);
-        mpg123_close(state->mh);
-        mpg123_delete(state->mh);
-        return NULL;
+#endif
+    } else {
+        snd_pcm_format_t format = SND_PCM_FORMAT_S16;
+        err = snd_pcm_set_params(state->alsa_pcm,
+                                 format,
+                                 SND_PCM_ACCESS_RW_INTERLEAVED,
+                                 channels,
+                                 rate,
+                                 1,
+                                 latency_us);
+        if (err < 0) {
+            fprintf(stderr, "Cannot set audio params: %s\n", snd_strerror(err));
+            snd_pcm_close(state->alsa_pcm);
+            mpg123_close(state->mh);
+            mpg123_delete(state->mh);
+            return NULL;
+        }
     }
 
     /* Playback loop */
@@ -128,8 +185,14 @@ static void *audio_thread(void *arg) {
             if (mpg123_getformat(state->mh, &rate, &channels, &encoding) != MPG123_OK) {
                 continue;
             }
-            snd_pcm_set_params(state->pcm, format, SND_PCM_ACCESS_RW_INTERLEAVED,
-                               channels, rate, 1, latency_us);
+#ifdef __FreeBSD__
+            if (state->use_oss) {
+            } else
+#endif
+            if (state->alsa_pcm) {
+                snd_pcm_set_params(state->alsa_pcm, SND_PCM_FORMAT_S16,
+                                   SND_PCM_ACCESS_RW_INTERLEAVED, channels, rate, 1, latency_us);
+            }
             printf("MP3 format changed: %ld Hz, %d channels\n", rate, channels);
             continue;
         }
@@ -148,15 +211,29 @@ static void *audio_thread(void *arg) {
             }
         }
 
-        snd_pcm_sframes_t frames = snd_pcm_writei(state->pcm, audio_buffer, samples / channels);
-        if (frames < 0) {
-            snd_pcm_prepare(state->pcm);
+#ifdef __FreeBSD__
+        if (state->use_oss) {
+            write(state->oss_fd, audio_buffer, done);
+        } else
+#endif
+        {
+            snd_pcm_sframes_t frames = snd_pcm_writei(state->alsa_pcm, audio_buffer, samples / channels);
+            if (frames < 0) {
+                snd_pcm_prepare(state->alsa_pcm);
+            }
         }
     }
 
     /* Cleanup */
-    snd_pcm_drop(state->pcm);
-    snd_pcm_close(state->pcm);
+#ifdef __FreeBSD__
+    if (state->use_oss) {
+        close(state->oss_fd);
+    } else
+#endif
+    {
+        snd_pcm_drop(state->alsa_pcm);
+        snd_pcm_close(state->alsa_pcm);
+    }
     mpg123_close(state->mh);
     mpg123_delete(state->mh);
     mpg123_exit();
@@ -169,7 +246,11 @@ static int init_audio(const char *mp3_file) {
     g_audio.mp3_file = strdup(mp3_file);
     g_audio.running = 1;
     g_audio.muted = 0;
-    g_audio.pcm = NULL;
+    g_audio.alsa_pcm = NULL;
+#ifdef __FreeBSD__
+    g_audio.oss_fd = -1;
+    g_audio.use_oss = 0;
+#endif
     g_audio.mh = NULL;
 
     return pthread_create(&g_audio.thread, NULL, audio_thread, &g_audio);

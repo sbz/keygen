@@ -17,6 +17,9 @@
 #define KEY_LENGTH 16
 #define AUDIO_BUFFER 8192
 
+#define SBZ_STR "(c) by sbz"
+#define KANJI_STR "花は桜木人は武士"
+
 /* Global state for audio thread */
 typedef struct {
     snd_pcm_t *pcm;
@@ -57,6 +60,7 @@ static void *audio_thread(void *arg) {
     int16_t audio_buffer[AUDIO_BUFFER / 2];
     size_t done;
     long rate;
+    long latency_us = 50000;
     int channels, encoding;
     int err;
 
@@ -101,7 +105,7 @@ static void *audio_thread(void *arg) {
                              channels,
                              rate,
                              1,
-                             500000);
+                             latency_us);
     if (err < 0) {
         fprintf(stderr, "Cannot set audio params: %s\n", snd_strerror(err));
         snd_pcm_close(state->pcm);
@@ -125,7 +129,7 @@ static void *audio_thread(void *arg) {
                 continue;
             }
             snd_pcm_set_params(state->pcm, format, SND_PCM_ACCESS_RW_INTERLEAVED,
-                               channels, rate, 1, 500000);
+                               channels, rate, 1, latency_us);
             printf("MP3 format changed: %ld Hz, %d channels\n", rate, channels);
             continue;
         }
@@ -491,12 +495,12 @@ int main(void) {
 
                 if (xft_font && xft_draw) {
                     XftDrawStringUtf8(xft_draw, &xft_white, xft_font, 10, 450,
-                                      (const FcChar8 *)"花は桜木人は武士", 21);
+                                      (const FcChar8 *)KANJI_STR, 21);
                 }
 
                 /* Draw copyright in red */
                 XSetForeground(display, gc, red_color.pixel);
-                XDrawString(display, window, gc, 540, 450, "(c) by sbz", 10);
+                XDrawString(display, window, gc, 540, 450, SBZ_STR, 10);
 
                 break;
             }
@@ -543,11 +547,11 @@ int main(void) {
                                       BlackPixel(display, screen), WhitePixel(display, screen));
 
                     XSetForeground(display, gc, red_color.pixel);
-                    XDrawString(display, window, gc, 540, 460, "(c) by sbz", 10);
+                    XDrawString(display, window, gc, 540, 450, SBZ_STR, 10);
 
                     if (xft_font && xft_draw) {
-                        XftDrawStringUtf8(xft_draw, &xft_white, xft_font, 10, 470,
-                                          (const FcChar8 *)"花は桜木人は武士", 7);
+                        XftDrawStringUtf8(xft_draw, &xft_white, xft_font, 10, 450,
+                                          (const FcChar8 *)KANJI_STR, 21);
                     }
                 }
 

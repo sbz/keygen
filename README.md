@@ -47,11 +47,16 @@ The application creates an X11 window with:
 - The generated key displayed in the center
 - A "Generate" button at the bottom
 - It display the image in the img/ folder as background
+- It plays a sound in the background as well
 
 Each time you click the button, a new random key is generated using `rand()` seeded with the current time.
 
 ## Visual
 
-Here what its looks like, but the experience is way better with the 8-bit background sound
+Here what its looks like, but the experience is way better with the 8-bits background sound
 
 ![keygen visual](./assets/keygen.gif)
+
+## FAQ
+
+The 8-bits chiptune background music are royalty free and are from the website https://www.fesliyanstudios.com

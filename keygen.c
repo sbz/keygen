@@ -81,6 +81,7 @@ static void *audio_thread(void *arg) {
     state->mh = mpg123_new(NULL, &err);
     if (!state->mh) {
         fprintf(stderr, "Failed to create mpg123 handle: %s\n", mpg123_plain_strerror(err));
+        state->running = 0;
         return NULL;
     }
 
@@ -88,6 +89,7 @@ static void *audio_thread(void *arg) {
     if (mpg123_open(state->mh, state->mp3_file) != MPG123_OK) {
         fprintf(stderr, "Failed to open MP3 file\n");
         mpg123_delete(state->mh);
+        state->running = 0;
         return NULL;
     }
 
@@ -96,6 +98,7 @@ static void *audio_thread(void *arg) {
         fprintf(stderr, "Failed to get audio format\n");
         mpg123_close(state->mh);
         mpg123_delete(state->mh);
+        state->running = 0;
         return NULL;
     }
 
@@ -114,6 +117,7 @@ static void *audio_thread(void *arg) {
             fprintf(stderr, "Cannot open OSS device /dev/dsp\n");
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
+            state->running = 0;
             return NULL;
         }
 
@@ -123,6 +127,7 @@ static void *audio_thread(void *arg) {
             close(state->oss_fd);
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
+            state->running = 0;
             return NULL;
         }
 
@@ -132,6 +137,7 @@ static void *audio_thread(void *arg) {
             close(state->oss_fd);
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
+            state->running = 0;
             return NULL;
         }
 
@@ -141,6 +147,7 @@ static void *audio_thread(void *arg) {
             close(state->oss_fd);
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
+            state->running = 0;
             return NULL;
         }
 
@@ -168,6 +175,7 @@ static void *audio_thread(void *arg) {
             mpg123_close(state->mh);
             mpg123_delete(state->mh);
             state->mh = NULL;
+            state->running = 0;
             return NULL;
         }
     }

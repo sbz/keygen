@@ -532,6 +532,7 @@ static void fill_random_bytes(unsigned char *buf, size_t n) {
             if (errno == EINTR) continue;
             break;
         }
+        if (r == 0) break;
         off += (size_t)r;
     }
     if (off == n) return;

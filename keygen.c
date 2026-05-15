@@ -215,9 +215,12 @@ static void *audio_thread(void *arg) {
             continue;
         }
 
-        int samples = done / sizeof(int16_t);
+        /* mpg123 returns S16 samples, so `done` is normally even. Drop a
+           trailing odd byte rather than emitting garbled audio. */
+        size_t aligned = done & ~(size_t)1;
+        int samples = (int)(aligned / sizeof(int16_t));
         if (state->muted) {
-            memset(audio_buffer, 0, done);
+            memset(audio_buffer, 0, aligned);
         } else {
             int16_t *decoded = (int16_t *)decode_buffer;
             for (int i = 0; i < samples; i++) {
@@ -227,7 +230,18 @@ static void *audio_thread(void *arg) {
 
 #ifdef __FreeBSD__
         if (state->use_oss) {
-            write(state->oss_fd, audio_buffer, done);
+            const unsigned char *p = (const unsigned char *)audio_buffer;
+            size_t remaining = aligned;
+            while (remaining > 0) {
+                ssize_t w = write(state->oss_fd, p, remaining);
+                if (w < 0) {
+                    if (errno == EINTR) continue;
+                    fprintf(stderr, "OSS write failed: %s\n", strerror(errno));
+                    break;
+                }
+                p += w;
+                remaining -= (size_t)w;
+            }
         } else
 #endif
         {

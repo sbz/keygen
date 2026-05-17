@@ -7,7 +7,9 @@ FreeBSD and Linux are supported.
 - Background sound is using ALSA on Linux
 - Background sound is using Open Sound System (OSS) on FreeBSD
 
-"Because I'm a huge fan of Samurai" -- **Hana wa sakuragi, hito wa bushi**
+> Because I’m a huge fan of Samurai
+>
+> — *Hana wa sakuragi, hito wa bushi*
 
 And yes, Keygen are totally useless now because we are free and use Free Software!
 

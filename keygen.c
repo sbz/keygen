@@ -565,14 +565,23 @@ static void generate_key(char *buffer, size_t length) {
 
 /* Format key with dashes every 4 characters */
 static void format_key(const char *key, char *formatted, size_t formatted_size) {
+    if (formatted_size == 0) return;
+
     size_t j = 0;
-    for (size_t i = 0; key[i] && j < formatted_size - 1; i++) {
-        if (i > 0 && i % 4 == 0 && j < formatted_size - 2) {
+
+    for (size_t i = 0; key[i] && (j + 1) < formatted_size; i++) {
+        if (i > 0 && i % 4 == 0 && (j + 1) < formatted_size) {
             formatted[j++] = '-';
         }
-        formatted[j++] = key[i];
+        if (j < formatted_size) {
+            formatted[j++] = key[i];
+        }
     }
-    formatted[j] = '\0';
+    if (j < formatted_size) {
+        formatted[j] = '\0';
+    } else {
+        formatted[formatted_size - 1] = '\0';
+    }
 }
 
 /* Draw filled button with retro style */

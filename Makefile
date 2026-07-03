@@ -1,6 +1,8 @@
 CC = cc
-CFLAGS = -Wall -Wextra -O2 `pkg-config --cflags xft`
-LDFLAGS = -lX11 -lmpg123 -lasound -lpthread -lm -ljpeg `pkg-config --libs xft`
+XFT_CFLAGS = $(shell pkg-config --cflags xft)
+XFT_LDFLAGS = $(shell pkg-config --libs xft)
+CFLAGS = -Wall -Wextra -O2 $(XFT_CFLAGS) -fsanitize=address -fsanitize=leak
+LDFLAGS = -lX11 -lmpg123 -lasound -lpthread -lm -ljpeg $(XFT_LDFLAGS)
 
 TARGET = keygen
 SRC = $(wildcard *.c)

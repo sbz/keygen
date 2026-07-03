@@ -60,6 +60,7 @@ static const char *bg_images[] = {
     "img/samurai-2.jpg",
     "img/samurai-3.jpg",
     "img/samurai-4.jpg",
+    "img/samurai-5.jpg",
 };
 #define NUM_BG_IMAGES (sizeof(bg_images) / sizeof(bg_images[0]))
 static int g_bg_index = 0;

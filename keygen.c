@@ -226,12 +226,16 @@ static void *audio_thread(void *arg) {
         }
 
         size_t aligned = done & ~(size_t)1;
-        int samples = (int)(aligned / sizeof(int16_t));
-        if (state->muted) {
+        size_t samples = aligned / sizeof(int16_t);
+        if (samples > sizeof(audio_buffer) / sizeof(audio_buffer[0])) {
+            samples = sizeof(audio_buffer) / sizeof(audio_buffer[0]);
+            aligned = samples * sizeof(int16_t);
+        }
+        if (atomic_load(&state->muted)) {
             memset(audio_buffer, 0, aligned);
         } else {
             int16_t *decoded = (int16_t *)decode_buffer;
-            for (int i = 0; i < samples; i++) {
+            for (size_t i = 0; i < samples; i++) {
                 audio_buffer[i] = decoded[i] / 4;
             }
         }
@@ -305,7 +309,7 @@ static int init_audio(const char *mp3_file) {
 
 /* Stop audio playback */
 static void stop_audio(void) {
-    g_audio.running = 0;
+    atomic_store(&g_audio.running, 0);
     if (g_audio.thread_started) {
         pthread_join(g_audio.thread, NULL);
         g_audio.thread_started = 0;
@@ -322,7 +326,7 @@ static void change_bg_music(void) {
     printf("Changing music to: %s\n", bg_music[g_music_index]);
 
     /* Stop current audio */
-    g_audio.running = 0;
+    atomic_store(&g_audio.running, 0);
     if (g_audio.thread_started) {
         pthread_join(g_audio.thread, NULL);
         g_audio.thread_started = 0;
@@ -338,12 +342,12 @@ static void change_bg_music(void) {
         return;
     }
     g_audio.mp3_file = next;
-    g_audio.running = 1;
+    atomic_store(&g_audio.running, 1);
     if (pthread_create(&g_audio.thread, NULL, audio_thread, &g_audio) != 0) {
         fprintf(stderr, "Failed to start audio thread\n");
         free(g_audio.mp3_file);
         g_audio.mp3_file = NULL;
-        g_audio.running = 0;
+        atomic_store(&g_audio.running, 0);
     } else {
         g_audio.thread_started = 1;
     }
@@ -482,12 +486,16 @@ static XImage *load_jpeg_image(Display *display, int screen, const char *filenam
             int dst_y = dy + offset_y;
 
             if (dst_x >= 0 && dst_x < target_width && dst_y >= 0 && dst_y < target_height) {
-                int src_idx = (src_y * src_width + src_x) * 3;
-                int dst_idx = (dst_y * target_width + dst_x) * 4;
-                scaled_data[dst_idx] = image_data[src_idx];
-                scaled_data[dst_idx + 1] = image_data[src_idx + 1];
-                scaled_data[dst_idx + 2] = image_data[src_idx + 2];
-                scaled_data[dst_idx + 3] = 0;
+                size_t src_idx = ((size_t)src_y * (size_t)src_width + (size_t)src_x) * 3;
+                size_t dst_idx = ((size_t)dst_y * (size_t)target_width + (size_t)dst_x) * 4;
+
+                if (src_idx + 2 < (size_t)src_width * (size_t)src_height * 3 &&
+                    dst_idx + 3 < (size_t)target_width * (size_t)target_height * 4) {
+                    scaled_data[dst_idx] = image_data[src_idx];
+                    scaled_data[dst_idx + 1] = image_data[src_idx + 1];
+                    scaled_data[dst_idx + 2] = image_data[src_idx + 2];
+                    scaled_data[dst_idx + 3] = 0;
+                }
             }
         }
     }
@@ -536,11 +544,17 @@ static void fill_random_bytes(unsigned char *buf, size_t n) {
         if (r == 0) break;
         off += (size_t)r;
     }
+    /* If we got all the bytes we needed, return */
     if (off == n) return;
-#endif
+    /* Otherwise, fill remaining bytes with rand() */
+    for (size_t i = off; i < n; i++) {
+        buf[i] = (unsigned char)(rand() & 0xff);
+    }
+#else
     for (size_t i = 0; i < n; i++) {
         buf[i] = (unsigned char)(rand() & 0xff);
     }
+#endif
 }
 
 static void generate_key(char *buffer, size_t length) {
